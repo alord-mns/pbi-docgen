@@ -19,13 +19,14 @@ from pathlib import Path
 from . import dataflow as dfmod
 from . import lineage as lineagemod
 from . import md
+from . import orchestration as orcmod
 from . import pbir as pbirmod
 from . import tmdl
+from . import config as configmod
 from .generate import (
-    DATAFLOWS_DIR,
     DOCS,
-    REPORT_DEFINITION,
-    SEMANTIC_DEFINITION,
+    _resolve_report_definitions,
+    _resolve_semantic_model,
 )
 
 
@@ -159,12 +160,87 @@ def _check_release_notes(docs: Path) -> tuple[bool, str]:
     return True, "ReleaseNotes.md template present."
 
 
+def _check_orchestration_coverage(
+    flows: list, docs: Path
+) -> tuple[bool, str]:
+    """Every orchestration flow must have a corresponding doc file."""
+    folder = docs / "orchestration"
+    if not flows:
+        return True, "No orchestration flows configured."
+    if not folder.exists():
+        return False, "docs/orchestration/ does not exist."
+    expected = {md.safe_filename(f.name) + ".md" for f in flows}
+    actual = {p.name for p in folder.glob("*.md")}
+    missing = sorted(expected - actual)
+    if missing:
+        return False, f"Missing orchestration docs: {missing}"
+    return True, f"All {len(flows)} orchestration flow(s) have a doc file."
+
+
+def _check_orchestration_id_resolution(
+    flows: list, lin: lineagemod.Lineage, cfg: configmod.Config
+) -> tuple[bool, str]:
+    """Every dataflow / dataset / workspace ID referenced by an orchestration
+    flow should resolve against the model + dataflows + configured workspaces.
+    """
+    known_workspaces = {
+        w.lower()
+        for w in (
+            [cfg.workspaces.primary, cfg.workspaces.dataset]
+            + list(cfg.workspaces.secondary)
+        )
+        if w
+    }
+    known_dataflows = {ref.dataflow_id for ref in lin.dataflow_refs.values()} | set(
+        lin.short_id_to_name.keys()
+    )
+    unresolved: list[str] = []
+    for f in flows:
+        for ws in f.workspace_ids:
+            if known_workspaces and ws.lower() not in known_workspaces:
+                unresolved.append(
+                    f"{f.name}: workspace `{ws}` not declared in [workspaces]"
+                )
+        for t in f.refresh_targets:
+            if t.kind == "dataflow":
+                # match either full ID or 8-char prefix
+                if t.object_id and not any(
+                    t.object_id == k or k.startswith(t.object_id[:8])
+                    for k in known_dataflows
+                ):
+                    unresolved.append(
+                        f"{f.name}: dataflow `{t.object_id}` not in repo (action `{t.action_name}`)"
+                    )
+    if unresolved:
+        return False, f"{len(unresolved)} unresolved ID(s) — sample: {unresolved[:3]}"
+    return True, "All orchestration IDs resolve against the repo + config."
+
+
 def main(argv: list[str] | None = None) -> int:
-    print("[validate] loading sources for measure-coverage check…")
-    model = tmdl.load_model(SEMANTIC_DEFINITION)
-    report = pbirmod.load_report(REPORT_DEFINITION)
-    dataflows = dfmod.load_dataflows(DATAFLOWS_DIR)
-    lin = lineagemod.build(model, report, dataflows)
+    cfg = configmod.load()
+    print("[validate] loading sources for quality gate checks…")
+    semantic_def = _resolve_semantic_model(cfg)
+    report_defs = _resolve_report_definitions(cfg)
+    model = tmdl.load_model(semantic_def)
+    reports = [pbirmod.load_report(rd) for rd in report_defs]
+    primary_report = reports[0]
+    dataflows_glob = cfg.paths.dataflow_exports
+    dataflows_dir = (
+        (md.REPO_ROOT / dataflows_glob).parent
+        if "*" in dataflows_glob
+        else md.REPO_ROOT / dataflows_glob
+    )
+    dataflows = dfmod.load_dataflows(dataflows_dir)
+    flows = orcmod.load_flows(cfg.resolve_many(cfg.paths.orchestration_definitions))
+    lin = lineagemod.build(
+        model,
+        primary_report,
+        dataflows,
+        reports=reports,
+        orchestration_flows=flows,
+    )
+    if cfg.workspaces.primary:
+        lin.primary_workspace_id = cfg.workspaces.primary
     files = _gather_md_files(DOCS)
     print(f"[validate] {len(files)} markdown files under {DOCS}")
 
@@ -172,12 +248,18 @@ def main(argv: list[str] | None = None) -> int:
     gates.append(("100% measure coverage", *_check_measure_coverage(model, files)))
     gates.append(("No unresolved unknowns", *_check_unresolved_unknowns(files)))
     gates.append(("Name consistency (tables)", *_check_name_consistency(model, files)))
-    gates.append(("Lineage completeness", *_check_lineage_completeness(model, DOCS / "lineage" / "lineage.md")))
+    gates.append(
+        ("Lineage completeness", *_check_lineage_completeness(model, DOCS / "lineage" / "lineage.md"))
+    )
     gates.append(("No sensitive data", *_check_secrets(files)))
     gates.append(("Audience labels present", *_check_audience_lines(files)))
     gates.append(("Cross-reference integrity", *_check_internal_links(files)))
     gates.append(("Change log initialised", *_check_changelog(DOCS)))
     gates.append(("Release notes template ready", *_check_release_notes(DOCS)))
+    gates.append(("Orchestration coverage", *_check_orchestration_coverage(flows, DOCS)))
+    gates.append(
+        ("Orchestration ID resolution", *_check_orchestration_id_resolution(flows, lin, cfg))
+    )
 
     overall = all(ok for _name, ok, _msg in gates)
     rows = ["| Gate | Status | Detail |", "| --- | --- | --- |"]

@@ -1,11 +1,12 @@
-"""Lineage graph for the FH&B Weekly solution.
+"""Lineage graph for a Power BI solution.
 
-Pulls together TMDL / PBIR / dataflow data and produces:
+Pulls together TMDL / PBIR / dataflow / orchestration data and produces:
 
 * node and edge lists suitable for a Mermaid flowchart
 * a measure-to-pages lookup used by the measures docs
 * a table-to-pages lookup used by the model doc
 * a workspace dataflow inventory keyed by dataflow ID
+* an orchestration inventory linking flows to the artefacts they refresh
 """
 from __future__ import annotations
 
@@ -42,14 +43,18 @@ class DataflowRef:
 @dataclass
 class Lineage:
     model: tmdl.Model
-    report: pbirmod.Report
+    report: pbirmod.Report  # primary report (first in the list); kept for back-compat
     dataflows: list[dfmod.Dataflow]
+    reports: list[pbirmod.Report] = field(default_factory=list)
+    orchestration_flows: list = field(default_factory=list)  # list[orchestration.Flow]
     dataflow_refs: dict[str, DataflowRef] = field(default_factory=dict)
     table_to_dataflows: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     measure_to_pages: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     column_to_pages: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     table_to_pages: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     primary_workspace_id: str = ""
+    dataset_workspace_id: str = ""
+    secondary_workspace_ids: list[str] = field(default_factory=list)
 
     def dataflow_name_for_id(self, dataflow_id: str) -> str:
         """Best-effort lookup: match exported dataflow JSON by name == any consumer's
@@ -84,9 +89,20 @@ def _scan_m_for_dataflows(m_code: str) -> list[tuple[str, str, set[str]]]:
 
 
 def build(
-    model: tmdl.Model, report: pbirmod.Report, dataflows: list[dfmod.Dataflow]
+    model: tmdl.Model,
+    report: pbirmod.Report,
+    dataflows: list[dfmod.Dataflow],
+    reports: list[pbirmod.Report] | None = None,
+    orchestration_flows: list | None = None,
 ) -> Lineage:
-    lineage = Lineage(model=model, report=report, dataflows=dataflows)
+    reports = reports or [report]
+    lineage = Lineage(
+        model=model,
+        report=report,
+        dataflows=dataflows,
+        reports=reports,
+        orchestration_flows=list(orchestration_flows or []),
+    )
 
     # ---- Dataflow references in TMDL partitions and shared expressions ----
     def _collect(consumer: str, m_code: str) -> None:
@@ -133,21 +149,22 @@ def build(
             lineage.short_id_to_name[ref.dataflow_id] = best_match
 
     # ---- Visual / page → measure & column → table back-references ----
-    for page in report.pages:
-        page_label = page.display_name or page.folder
-        for visual in page.visuals:
-            for fr in visual.fields:
-                if not fr.entity:
-                    continue
-                qual = fr.qualified
-                if fr.kind == "Measure":
-                    lineage.measure_to_pages[qual].add(page_label)
-                elif fr.kind in ("Column", "HierarchyLevel"):
-                    lineage.column_to_pages[qual].add(page_label)
-                lineage.table_to_pages[fr.entity].add(page_label)
-        for flt in page.filters:
-            if flt.field.entity:
-                lineage.table_to_pages[flt.field.entity].add(page_label)
+    for rep in reports:
+        for page in rep.pages:
+            page_label = page.display_name or page.folder
+            for visual in page.visuals:
+                for fr in visual.fields:
+                    if not fr.entity:
+                        continue
+                    qual = fr.qualified
+                    if fr.kind == "Measure":
+                        lineage.measure_to_pages[qual].add(page_label)
+                    elif fr.kind in ("Column", "HierarchyLevel"):
+                        lineage.column_to_pages[qual].add(page_label)
+                    lineage.table_to_pages[fr.entity].add(page_label)
+            for flt in page.filters:
+                if flt.field.entity:
+                    lineage.table_to_pages[flt.field.entity].add(page_label)
 
     return lineage
 

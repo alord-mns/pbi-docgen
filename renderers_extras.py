@@ -1,4 +1,9 @@
-"""Render data-source, dataflow, glossary, report, app, runbook, release-notes docs."""
+"""Render data-source, dataflow, glossary, report, app, runbook, release-notes docs.
+
+All repo-specific narrative comes from ``docs/.docgen.toml`` via
+:mod:`scripts.docgen.config`. Renderers fall back to neutral placeholders
+when a config field is empty.
+"""
 from __future__ import annotations
 
 import re
@@ -9,49 +14,18 @@ from . import md
 from . import tmdl
 from . import dataflow as dfmod
 from . import pbir as pbirmod
+from .config import Config
 from .lineage import Lineage
 
 
 # ---------------------------------------------------------------------------
 # Glossary
 # ---------------------------------------------------------------------------
-ACRONYMS: dict[str, str] = {
-    "FH&B": "Furniture, Homewares & Beauty (M&S Business Unit grouping).",
-    "C&H": "Clothing & Home — predecessor BU naming used in some legacy column values; mapped to `FH&B` in dimension dataflows.",
-    "EDW": "Enterprise Data Warehouse — historical SQL warehouse referenced by selected dimension dataflows.",
-    "TRAS": "Trading Reporting Analytics Source — internal naming convention used by the dimension dataflow.",
-    "MP": "Merchandise Plan — long-range plan used as a comparator in `factMPPlan` / `factMPStock`.",
-    "QRF": "Quarterly Re-Forecast — a comparator forecast version.",
-    "BUD": "Budget — annual budget version used as a comparator forecast.",
-    "FC": "Forecast — current operational forecast.",
-    "BU": "Business Unit (e.g. Furniture, Beauty, Homewares).",
-    "SRIV": "Sales Revenue Including VAT — top-line sales metric.",
-    "SREV": "Sales Revenue Excluding VAT — sales metric used for margin calculations.",
-    "GSM": "Gross Selling Margin — `SREV − COGS` (excluding indirect costs).",
-    "GSRIV": "Gross Sales Revenue Including VAT — pre-discount SRIV.",
-    "GSREV": "Gross Sales Revenue Excluding VAT — pre-discount SREV.",
-    "FPP / FP": "Full-Price Sales / Full-Price (`fp_rp_ind = 'F'`).",
-    "RP": "Reduced-Price Sales (`fp_rp_ind = 'R'`).",
-    "LY": "Last Year — comparator computed via the inactive `fiscalWeekLastYear` relationship on `Calendar`.",
-    "LY-1": "Two years ago — comparator via `fiscalWeekLastToLastyear`.",
-    "LW": "Last Week — comparator via the inactive `fiscalWeekLastWeek` relationship.",
-    "AOV": "Average Order Value.",
-    "DWA": "Department Weighted Availability — input to `factAvailability`.",
-    "GMOR": "Gross Margin Order Reporting — historical order reporting bridge (`*GMOR` queries).",
-    "POS": "Point of Sale (store till).",
-    "PnL / P&L": "Profit & Loss reporting.",
-    "RLS": "Row-Level Security.",
-    "FY": "Fiscal Year (M&S fiscal calendar — 4-4-5 weeks, year ends late March).",
-    "OMS": "Order Management System.",
-    "RMIV": "Returns Merchandise Including VAT.",
-    "RMEV": "Returns Merchandise Excluding VAT.",
-}
-
-
-def render_glossary(lin: Lineage) -> str:
+def render_glossary(lin: Lineage, cfg: Config) -> str:
+    display = cfg.solution.display_name or lin.model.name
     body = [md.HEADER, "# Business Glossary & Definitions\n"]
     body.append(md.section_purpose(
-        "Plain-language definitions of the business terms, KPIs, and acronyms used across the FH&B Weekly solution.",
+        f"Plain-language definitions of the business terms, KPIs, and acronyms used across the {display} solution.",
         "Business End Users", "Product Managers", "Power BI Developers",
     ))
 
@@ -69,23 +43,26 @@ def render_glossary(lin: Lineage) -> str:
         for k in sorted(terms):
             body.append(f"- **{k}** — {md.md_escape_pipe(terms[k])}")
     else:
-        body.append(f"_{md.PLACEHOLDER} — populate with definitions of FH&B trading terminology used in the report (e.g. *Trading week*, *Outlet*, *Channel*, *Plan vs Forecast*, *Actualised forecast*)._")
+        body.append(f"_{md.PLACEHOLDER} — populate with business term definitions used in the report._")
     body.append("")
 
     body.append("\n## Key Metrics\n")
-    headline = [
-        "SRIV", "SREV", "GSM", "GSM % SREV", "Returns", "Return rate %",
-        "FPP SRIV", "RP SRIV", "Buying Margin", "Markdown",
-    ]
-    for name in headline:
-        body.append(f"- **{name}** — see corresponding measure(s) in [`docs/measures/`](measures/) and acronym definitions below.")
+    headline = list(cfg.headline_metrics)
+    if headline:
+        for name in headline:
+            body.append(f"- **{name}** — see corresponding measure(s) in [`docs/measures/`](measures/) and acronym definitions below.")
+    else:
+        body.append(f"_{md.PLACEHOLDER} — populate `[headline_metrics].names` in `docs/.docgen.toml` to spotlight key KPIs._")
     body.append("")
 
     body.append("\n## Acronyms & Abbreviations\n")
-    body.append("| Term | Definition |")
-    body.append("| --- | --- |")
-    for k in sorted(ACRONYMS):
-        body.append(f"| `{k}` | {md.md_escape_pipe(ACRONYMS[k])} |")
+    if cfg.acronyms:
+        body.append("| Term | Definition |")
+        body.append("| --- | --- |")
+        for k in sorted(cfg.acronyms):
+            body.append(f"| `{k}` | {md.md_escape_pipe(cfg.acronyms[k])} |")
+    else:
+        body.append(f"_{md.PLACEHOLDER} — populate `[acronyms]` in `docs/.docgen.toml`._")
     body.append("")
 
     body.append("\n## Maintenance Note\n")
@@ -98,94 +75,58 @@ def render_glossary(lin: Lineage) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Data sources (one file per upstream system)
+# Data sources (one file per upstream system) — config-driven
 # ---------------------------------------------------------------------------
-DATA_SOURCE_INFO = {
-    "Azure Databricks (beam_prod)": {
-        "purpose": "Primary upstream data platform — finance and master-data zones containing the conformed fact and dimension tables consumed by the FH&B Weekly dataflows.",
-        "mechanism": "`Databricks.Catalogs` connector via the workspace SQL warehouse. Connection parameters `pHostName` / `pHTTPPath` are stored as parameter queries inside each dataflow.",
-        "host": "`adb-669306003554516.16.azuredatabricks.net` (warehouse `/sql/1.0/warehouses/740a576e0e6de905`)",
-        "objects": [
-            ("`beam_prod.finance_azlab_prod.fact_orders_fhbwk`", "Fact — order revenue / margin at fiscal-week × site × dept × channel × FP/RP grain", "table"),
-            ("`beam_prod.finance_azlab_prod.fact_orders_chwk`", "Historical (C&H) order revenue used to splice pre-FH&B history", "table"),
-            ("`beam_prod.finance_azlab_prod.fact_ordervol_fhbwk`", "Fact — order volume (units)", "table"),
-            ("`beam_prod.finance_azlab_prod.fact_stock_fhbwk`", "Fact — stock value & quantity", "table"),
-            ("`beam_prod.masterdata_present_prod.dimproduct_nsaz_tbl`", "Dimension — product / department lookup", "table"),
-            ("…and additional fact / dim tables consumed by other dataflows — see [`docs/dataflows/`](../dataflows/).", "", ""),
-        ],
-        "freshness": "Daily (driven by upstream Databricks pipelines).",
-        "schedule": f"{md.PLACEHOLDER} (UTC) — set on the dataflow refresh schedule in Power BI.",
-    },
-    "SharePoint Online (Manual inputs)": {
-        "purpose": "Hosts Excel and CSV manual inputs maintained by the business: forecast uploads, trading commentary, manual availability, lookup tables.",
-        "mechanism": "`SharePoint.Files` and `Excel.Workbook` / `Csv.Document` connectors over the FinanceAnalyticsCentreofExcellence site.",
-        "host": "`https://mnscorp.sharepoint.com/sites/FinanceAnalyticsCentreofExcellence/`",
-        "objects": [
-            ("`Shared Documents/C&H Reporting/Manual input data/`", "Folder containing manual lookup workbooks (e.g. `Home Sub_BU Lookup.xlsx`)", "folder"),
-            ("Forecast / commentary / availability workbooks", "See dataflows `4.1`, `4.2`, `4.3`, `5.2`", "files"),
-        ],
-        "freshness": "Refresh frequency is dictated by user uploads (typically weekly before each trading review).",
-        "schedule": f"{md.PLACEHOLDER}",
-    },
-    "EDW (Sql.Database)": {
-        "purpose": "Selected dimension data sourced via the EDW SQL endpoint by some of the dimension dataflows.",
-        "mechanism": "`Sql.Database` connector — see dataflow `1.1 Dimension Tables - TRAS` and `2.2c MP Plans Sales`.",
-        "host": md.PLACEHOLDER,
-        "objects": [("EDW dimension tables", "Site letter codes, company codes, additional master data", "tables")],
-        "freshness": md.PLACEHOLDER,
-        "schedule": md.PLACEHOLDER,
-    },
-    "Adobe Analytics": {
-        "purpose": "Online customer behaviour metrics consumed by `factAdobe` and `factAOV`.",
-        "mechanism": "Power BI Dataflow in a separate workspace (`dbdde023-0de1-4da5-bc99-1bda1526f5b1`); see [`docs/dataflow-references.md`](../dataflow-references.md).",
-        "host": md.PLACEHOLDER,
-        "objects": [("`factAdobe`", "Adobe-sourced visitor and conversion metrics", "entity"), ("`factAOV`", "Average order value derived metric", "entity")],
-        "freshness": md.PLACEHOLDER,
-        "schedule": md.PLACEHOLDER,
-    },
-}
-
-
-def render_data_sources(lin: Lineage) -> dict[str, str]:
+def render_data_sources(lin: Lineage, cfg: Config) -> dict[str, str]:
     files: dict[str, str] = {}
+    sources = cfg.data_sources
+
     # Index README
     idx = [md.HEADER, "# Data Sources\n"]
     idx.append(md.section_purpose(
         "Per-source connection, refresh, and ownership detail. Credentials are never recorded here — only the connection mechanism.",
         "Data Engineers", "Operations/Support",
     ))
-    idx.append("\n| Source | File |\n| --- | --- |")
-    for name in DATA_SOURCE_INFO:
-        fn = md.safe_filename(name) + ".md"
-        idx.append(f"| {name} | {md.link(fn, fn)} |")
-    idx.append("")
+    if sources:
+        idx.append("\n| Source | File |\n| --- | --- |")
+        for ds in sources:
+            fn = md.safe_filename(ds.name) + ".md"
+            idx.append(f"| {ds.name} | {md.link(fn, fn)} |")
+        idx.append("")
+    else:
+        idx.append(f"\n_{md.PLACEHOLDER} — populate `[[data_sources]]` entries in `docs/.docgen.toml` so the engine emits one file per upstream system._")
     files["README.md"] = "\n".join(idx)
 
-    for name, info in DATA_SOURCE_INFO.items():
-        body = [md.HEADER, f"# Data Source — {name}\n"]
+    for ds in sources:
+        body = [md.HEADER, f"# Data Source — {ds.name}\n"]
         body.append(md.section_purpose(
-            f"Connection, schedule, and dependency detail for `{name}`.",
+            f"Connection, schedule, and dependency detail for `{ds.name}`.",
             "Data Engineers", "Operations/Support",
         ))
         body.append("\n## Source Description\n")
-        body.append(info["purpose"])
+        body.append(ds.purpose or md.PLACEHOLDER)
         body.append("\n## Connection Details\n")
-        body.append(f"- **Mechanism:** {info['mechanism']}")
-        body.append(f"- **Host / endpoint:** {info['host']}")
+        body.append(f"- **Mechanism:** {ds.mechanism or md.PLACEHOLDER}")
+        body.append(f"- **Host / endpoint:** {ds.host or md.PLACEHOLDER}")
         body.append("- **Credentials:** stored in the Power BI service against the dataflow / dataset; **never** committed to this repository. Replace with `{{CREDENTIAL_PLACEHOLDER}}` when documenting locally.")
         body.append("\n## Data Extracted\n")
-        body.append("| Object | Description | Type |")
-        body.append("| --- | --- | --- |")
-        for obj in info["objects"]:
-            body.append(f"| {obj[0]} | {md.md_escape_pipe(obj[1])} | {obj[2]} |")
+        if ds.objects:
+            body.append("| Object | Description | Type |")
+            body.append("| --- | --- | --- |")
+            for obj in ds.objects:
+                a = obj[0] if len(obj) > 0 else ""
+                b = obj[1] if len(obj) > 1 else ""
+                c = obj[2] if len(obj) > 2 else ""
+                body.append(f"| {a} | {md.md_escape_pipe(b)} | {c} |")
+        else:
+            body.append(f"_{md.PLACEHOLDER} — list extracted objects in the source's `objects` array in `docs/.docgen.toml`._")
         body.append("\n## Data Volume & Performance\n")
         body.append(f"- Approximate row count: {md.PLACEHOLDER}")
-        body.append("- Query folding: connector-dependent — `Databricks.Catalogs` and `Sql.Database` queries fold; SharePoint / Excel queries do not fold.")
-        body.append("- Incremental refresh policy: not configured at the time of generation; see [`docs/dataflows/`](../dataflows/) for per-dataflow refresh policies.")
+        body.append("- Query folding: connector-dependent — SQL-style connectors (`Sql.Database`, `Databricks.Catalogs`) fold; file-based connectors (SharePoint, Excel, CSV) do not fold.")
+        body.append("- Incremental refresh policy: see [`docs/dataflows/`](../dataflows/) for per-dataflow refresh policies.")
         body.append("\n## Refresh Schedule\n")
-        body.append(f"- **Frequency:** {info['freshness']}")
-        body.append(f"- **Timing:** {info['schedule']}")
-        body.append(f"- **Trigger mechanism:** Power BI Service scheduled refresh; see [`docs/ops/runbook.md`](../ops/runbook.md).")
+        body.append(f"- **Frequency:** {ds.freshness or md.PLACEHOLDER}")
+        body.append(f"- **Trigger mechanism:** Power BI Service scheduled refresh and/or orchestration flows — see [`docs/orchestration/`](../orchestration/) and [`docs/ops/runbook.md`](../ops/runbook.md).")
         body.append("\n## Data Quality & Transformation Notes\n")
         body.append("- All transformation logic lives in the dataflows — see [`docs/dataflows/`](../dataflows/).")
         body.append("- Specific data-quality rules / known data caveats: " + md.PLACEHOLDER)
@@ -193,22 +134,21 @@ def render_data_sources(lin: Lineage) -> dict[str, str]:
         body.append(f"- Source system owner: {md.PLACEHOLDER}")
         body.append(f"- Documentation owner: {md.PLACEHOLDER}")
         body.append("\n## Dependencies\n")
-        # find dataflows depending on this source
-        if name.startswith("Azure Databricks"):
-            consumers = [d.name for d in lin.dataflows if "Databricks.Catalogs" in d.primary_data_sources()]
-        elif name.startswith("SharePoint"):
-            consumers = [d.name for d in lin.dataflows if "SharePoint.Files" in d.primary_data_sources() or "Excel.Workbook" in d.primary_data_sources()]
-        elif name.startswith("EDW"):
-            consumers = [d.name for d in lin.dataflows if "Sql.Database" in d.primary_data_sources()]
-        else:
-            consumers = []
+        # Detect dataflows that use any of the configured connector tokens.
+        tokens = ds.connector_match or []
+        consumers: list[str] = []
+        if tokens:
+            for d in lin.dataflows:
+                df_sources = d.primary_data_sources()
+                if any(tok in df_sources for tok in tokens):
+                    consumers.append(d.name)
         if consumers:
-            for c in consumers:
+            for c in sorted(consumers):
                 body.append(f"- {md.link(c, '../dataflows/' + md.safe_filename(c) + '.md')}")
         else:
             body.append("- See [`docs/dataflow-references.md`](../dataflow-references.md) for the full dataflow inventory.")
         body.append("")
-        files[md.safe_filename(name) + ".md"] = "\n".join(body)
+        files[md.safe_filename(ds.name) + ".md"] = "\n".join(body)
     return files
 
 
@@ -369,98 +309,79 @@ def _format_visual_row(v: pbirmod.Visual) -> str:
 
 def render_reports(lin: Lineage) -> dict[str, str]:
     files: dict[str, str] = {}
-    rname = lin.report.name or lin.model.name
-    body = [md.HEADER, f"# Report — {rname}\n"]
-    body.append(md.section_purpose(
-        "Per-page documentation for the FH&B Weekly thin report. Each section explains intent, slicers, filters, and the visuals on the page.",
-        "Power BI Developers", "Business End Users",
-    ))
+    reports = lin.reports or [lin.report]
 
-    body.append("\n## Report Overview\n")
-    body.append(f"- **Connected dataset:** same `.pbip` semantic model — `{lin.model.name}`.")
-    body.append(f"- **Pages:** {len(lin.report.pages)}")
-    body.append(f"- **Visuals:** {sum(len(p.visuals) for p in lin.report.pages)}")
-    body.append(f"- **Target audience:** {md.PLACEHOLDER} (e.g. FH&B finance, trading directors, BU leads)")
-    body.append("- **Business questions answered:** weekly FH&B trading performance vs LY / LW / Budget / QRF / Forecast across SRIV, GSM, returns, stock, online metrics, and forward-view projections.")
-    body.append("")
+    for rep in reports:
+        rname = rep.name or lin.model.name
+        body = [md.HEADER, f"# Report — {rname}\n"]
+        body.append(md.section_purpose(
+            f"Per-page documentation for the `{rname}` thin report. Each section explains intent, slicers, filters, and the visuals on the page.",
+            "Power BI Developers", "Business End Users",
+        ))
 
-    body.append("\n## Pages Summary\n")
-    body.append("| # | Page | Visuals | Page filters | Purpose |")
-    body.append("| --- | --- | --- | --- | --- |")
-    for i, p in enumerate(lin.report.pages, 1):
-        purpose = md.PLACEHOLDER
-        # heuristic: if display name matches a known pattern, supply hint
-        nm = (p.display_name or "").lower()
-        if "latest_data" in nm:
-            purpose = "Live data freshness summary."
-        elif nm in ("orders", "dispatch", "sales", "returns", "stock"):
-            purpose = f"`{nm.title()}` overview."
-        elif "bud" in nm:
-            purpose = "Budget comparator view."
-        elif "qrf" in nm:
-            purpose = "QRF (Quarterly Re-Forecast) comparator view."
-        elif "fc" in nm or "forecast" in nm:
-            purpose = "Forecast view."
-        elif "online" in nm:
-            purpose = "Online channel metrics."
-        elif "footfall" in nm:
-            purpose = "Footfall / store traffic."
-        elif "margin" in nm:
-            purpose = "Margin (GSM / Buying Margin) view."
-        body.append(
-            f"| {i} | `{md.md_escape_pipe(p.display_name or p.folder)}` | {len(p.visuals)} | "
-            f"{len(p.filters)} | {purpose} |"
-        )
-    body.append("")
-
-    body.append("\n## Detailed Page Descriptions\n")
-    for p in lin.report.pages:
-        page_label = p.display_name or p.folder
-        body.append(f"\n### `{page_label}`\n")
-        body.append(f"_Internal name: `{p.name}` · {p.width}×{p.height} px · displayOption: `{p.display_option}`_\n")
-        body.append(f"**Intent.** {md.PLACEHOLDER} (suggest 1–2 sentences capturing the story this page tells).")
+        body.append("\n## Report Overview\n")
+        body.append(f"- **Connected dataset:** same `.pbip` semantic model — `{lin.model.name}`.")
+        body.append(f"- **Pages:** {len(rep.pages)}")
+        body.append(f"- **Visuals:** {sum(len(p.visuals) for p in rep.pages)}")
+        body.append(f"- **Target audience:** {md.PLACEHOLDER}")
+        body.append(f"- **Business questions answered:** {md.PLACEHOLDER}")
         body.append("")
-        if p.filters:
-            body.append("**Page-level filters:**")
-            for flt in p.filters:
-                ent = flt.field.entity or "(unbound)"
-                prop = flt.field.member or ""
-                body.append(f"- `{ent}[{prop}]` — {flt.type or 'Categorical'} ({flt.how_created or 'User'})")
-            body.append("")
-        # Slicers (visualType == "slicer")
-        slicers = [v for v in p.visuals if v.visual_type == "slicer"]
-        if slicers:
-            body.append("**Slicers:**")
-            for s in slicers:
-                fields = ", ".join(f"`{f.entity}.{f.member}`" for f in s.fields)
-                body.append(f"- {md.md_escape_pipe(s.title) or '_(unlabelled)_'} — {fields or '_no field bound_'}")
-            body.append("")
-        non_slicer = [v for v in p.visuals if v.visual_type != "slicer"]
-        if non_slicer:
-            body.append("**Visuals:**")
-            body.append("| Type | Title | Fields |")
-            body.append("| --- | --- | --- |")
-            for v in non_slicer:
-                body.append(_format_visual_row(v))
-            body.append("")
-        body.append("**Drill-through / cross-report links.** " + md.PLACEHOLDER)
+
+        body.append("\n## Pages Summary\n")
+        body.append("| # | Page | Visuals | Page filters | Purpose |")
+        body.append("| --- | --- | --- | --- | --- |")
+        for i, p in enumerate(rep.pages, 1):
+            body.append(
+                f"| {i} | `{md.md_escape_pipe(p.display_name or p.folder)}` | {len(p.visuals)} | "
+                f"{len(p.filters)} | {md.PLACEHOLDER} |"
+            )
         body.append("")
-    body.append("\n## Bookmarks & Navigation\n")
-    body.append("- Bookmark metadata not parsed by the documentation generator — populate manually if bookmarks are used. " + md.PLACEHOLDER)
-    body.append("")
-    body.append("\n## Usage Tips\n")
-    body.append("- The report is a thin report connected live to the published semantic model: opening it in Power BI Desktop requires access to the workspace.")
-    body.append("- Most pages provide LY / LW / Budget / QRF / FC comparators via `ComparatorSelect` (top-of-report slicer).")
-    body.append("- Use the `OutletsControl` filter to switch between *Outlets* and *Ex-Outlets* views.")
-    body.append("- Visual-level filters often pin specific BUs / channels — check the filter pane before exporting.")
-    body.append("")
-    body.append("\n## Known Issues or Exclusions\n")
-    body.append(f"- {md.PLACEHOLDER}")
-    body.append("")
-    body.append("\n## Report-Specific Calculations\n")
-    body.append("_All measures live in the semantic model (`1_Measures`, `factSalesDispatch`, etc.) — see [`docs/measures/`](../measures/). No report-level measures detected._")
-    body.append("")
-    files[md.safe_filename(rname) + ".md"] = "\n".join(body)
+
+        body.append("\n## Detailed Page Descriptions\n")
+        for p in rep.pages:
+            page_label = p.display_name or p.folder
+            body.append(f"\n### `{page_label}`\n")
+            body.append(f"_Internal name: `{p.name}` · {p.width}×{p.height} px · displayOption: `{p.display_option}`_\n")
+            body.append(f"**Intent.** {md.PLACEHOLDER} (suggest 1–2 sentences capturing the story this page tells).")
+            body.append("")
+            if p.filters:
+                body.append("**Page-level filters:**")
+                for flt in p.filters:
+                    ent = flt.field.entity or "(unbound)"
+                    prop = flt.field.member or ""
+                    body.append(f"- `{ent}[{prop}]` — {flt.type or 'Categorical'} ({flt.how_created or 'User'})")
+                body.append("")
+            slicers = [v for v in p.visuals if v.visual_type == "slicer"]
+            if slicers:
+                body.append("**Slicers:**")
+                for s in slicers:
+                    fields = ", ".join(f"`{f.entity}.{f.member}`" for f in s.fields)
+                    body.append(f"- {md.md_escape_pipe(s.title) or '_(unlabelled)_'} — {fields or '_no field bound_'}")
+                body.append("")
+            non_slicer = [v for v in p.visuals if v.visual_type != "slicer"]
+            if non_slicer:
+                body.append("**Visuals:**")
+                body.append("| Type | Title | Fields |")
+                body.append("| --- | --- | --- |")
+                for v in non_slicer:
+                    body.append(_format_visual_row(v))
+                body.append("")
+            body.append("**Drill-through / cross-report links.** " + md.PLACEHOLDER)
+            body.append("")
+        body.append("\n## Bookmarks & Navigation\n")
+        body.append("- Bookmark metadata not parsed by the documentation generator — populate manually if bookmarks are used. " + md.PLACEHOLDER)
+        body.append("")
+        body.append("\n## Usage Tips\n")
+        body.append("- The report is a thin report connected live to the published semantic model: opening it in Power BI Desktop requires access to the workspace.")
+        body.append(f"- {md.PLACEHOLDER} — add report-specific tips (comparator selectors, drill paths, filter conventions).")
+        body.append("")
+        body.append("\n## Known Issues or Exclusions\n")
+        body.append(f"- {md.PLACEHOLDER}")
+        body.append("")
+        body.append("\n## Report-Specific Calculations\n")
+        body.append("_Report-level measures are not parsed by the documentation generator. All measures live in the semantic model — see [`docs/measures/`](../measures/)._")
+        body.append("")
+        files[md.safe_filename(rname) + ".md"] = "\n".join(body)
 
     # Reports README index
     idx = [md.HEADER, "# Reports\n"]
@@ -468,7 +389,11 @@ def render_reports(lin: Lineage) -> dict[str, str]:
         "Index of report documentation files. Each file documents a single thin report.",
         "Power BI Developers", "Business End Users",
     ))
-    idx.append(f"\n- {md.link(rname, md.safe_filename(rname) + '.md')}\n")
+    idx.append("")
+    for rep in reports:
+        rname = rep.name or lin.model.name
+        idx.append(f"- {md.link(rname, md.safe_filename(rname) + '.md')} — {len(rep.pages)} page(s)")
+    idx.append("")
     files["README.md"] = "\n".join(idx)
     return files
 
@@ -476,8 +401,8 @@ def render_reports(lin: Lineage) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Power BI App
 # ---------------------------------------------------------------------------
-def render_app(lin: Lineage) -> dict[str, str]:
-    name = "FH&B Weekly App"
+def render_app(lin: Lineage, cfg: Config) -> dict[str, str]:
+    name = cfg.app.name or (cfg.solution.display_name + " App" if cfg.solution.display_name else "Power BI App")
     fn = md.safe_filename(name) + ".md"
     body = [md.HEADER, f"# Power BI App — {name}\n"]
     body.append(md.section_purpose(
@@ -486,17 +411,18 @@ def render_app(lin: Lineage) -> dict[str, str]:
     ))
 
     body.append("\n## App Overview\n")
-    body.append(f"- **App name:** `{name}` ({md.PLACEHOLDER})")
-    body.append(f"- **Workspace:** `{lin.primary_workspace_id or md.PLACEHOLDER}`")
-    body.append("- **Purpose:** distribute the FH&B Weekly trading reports and (optionally) related supporting reports to the FH&B finance and trading community via a single, branded entry point.")
-    body.append(f"- **Intended audience:** {md.PLACEHOLDER} (FH&B finance team, trading directors, BU leads, analytics support).")
+    body.append(f"- **App name:** `{name}`")
+    workspace = cfg.workspaces.dataset or cfg.workspaces.primary or lin.primary_workspace_id or md.PLACEHOLDER
+    body.append(f"- **Workspace:** `{workspace}`")
+    body.append(f"- **Purpose:** {cfg.app.purpose or md.PLACEHOLDER}")
+    body.append(f"- **Intended audience:** {cfg.app.audience or md.PLACEHOLDER}")
     body.append("")
 
     body.append("\n## Included Content\n")
-    body.append("| Report / Dashboard | Section in App |")
-    body.append("| --- | --- |")
-    body.append(f"| `{lin.report.name}` ({len(lin.report.pages)} pages) | {md.PLACEHOLDER} |")
-    body.append(f"| Other reports | {md.PLACEHOLDER} |")
+    body.append("| Report / Dashboard | Pages | Section in App |")
+    body.append("| --- | --- | --- |")
+    for rep in (lin.reports or [lin.report]):
+        body.append(f"| `{rep.name}` | {len(rep.pages)} | {md.PLACEHOLDER} |")
     body.append("")
 
     body.append("\n## Navigation & Usage\n")
@@ -540,27 +466,34 @@ def render_app(lin: Lineage) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Operations runbook
 # ---------------------------------------------------------------------------
-def render_runbook(lin: Lineage) -> str:
+def render_runbook(lin: Lineage, cfg: Config) -> str:
     body = [md.HEADER, "# Operations Runbook & Support Guide\n"]
     body.append(md.section_purpose(
         "Operational guide covering refresh workflow, monitoring, common-issue playbooks, contacts, and recovery.",
         "Operations/Support", "Power BI Developers", "Data Engineers",
     ))
 
+    primary_ws = cfg.workspaces.primary or lin.primary_workspace_id
+    dataset_ws = cfg.workspaces.dataset or lin.dataset_workspace_id or primary_ws
+
     body.append("\n## Operations Overview\n")
     body.append(f"- **Responsible team:** {md.PLACEHOLDER}")
     body.append(f"- **Support hours:** {md.PLACEHOLDER}")
     body.append(f"- **SLA targets:** {md.PLACEHOLDER}")
-    body.append(f"- **Workspace:** `{lin.primary_workspace_id or md.PLACEHOLDER}`")
+    body.append(f"- **Primary workspace:** `{primary_ws or md.PLACEHOLDER}`")
+    if dataset_ws and dataset_ws != primary_ws:
+        body.append(f"- **Dataset workspace:** `{dataset_ws}`")
     body.append("")
 
     body.append("\n## Refresh Workflow\n")
-    body.append("End-to-end weekly refresh sequence:")
-    body.append("1. **Upstream Databricks pipelines complete** — finance / master-data zones are populated. Owner: " + md.PLACEHOLDER + ".")
-    body.append(f"2. **Power BI Dataflows refresh** in the primary workspace (`{lin.primary_workspace_id[:8] if lin.primary_workspace_id else md.PLACEHOLDER}…`). {len(lin.dataflows)} dataflow(s) — see [`docs/dataflows/`](../dataflows/) for per-dataflow detail. Expected duration per dataflow: {md.PLACEHOLDER}.")
-    body.append("3. **Semantic model refresh** in the same workspace, scheduled to start after the latest dataflow completes (typical lag {{PLACEHOLDER}} minutes).")
-    body.append("4. **Subscriptions / email alerts** fire to the FH&B distribution list once the dataset refresh succeeds.")
-    body.append(f"5. **Validation step:** run [`scripts/01_list_dataflows.ps1`](../../scripts/01_list_dataflows.ps1) or check the workspace refresh history.")
+    body.append("End-to-end refresh sequence (see [`docs/orchestration/`](../orchestration/) for the per-flow detail):")
+    body.append("1. **Upstream pipelines complete** — source platforms populate the consumed tables. Owner: " + md.PLACEHOLDER + ".")
+    body.append(f"2. **Power BI Dataflows refresh** in the primary workspace (`{(primary_ws or md.PLACEHOLDER)[:8]}…`). {len(lin.dataflows)} dataflow(s) — see [`docs/dataflows/`](../dataflows/).")
+    if lin.orchestration_flows:
+        body.append(f"3. **Orchestration flows** ({len(lin.orchestration_flows)}) trigger / monitor refreshes and post notifications. See [`docs/orchestration/`](../orchestration/).")
+    body.append("4. **Semantic model refresh** runs after dataflow completion (typical lag {{PLACEHOLDER}} minutes).")
+    body.append("5. **Subscriptions / email alerts** fire on dataset success.")
+    body.append("6. **Validation step:** check the workspace refresh history.")
     body.append("")
 
     body.append("\n## Monitoring & Alerts\n")

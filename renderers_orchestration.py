@@ -69,6 +69,184 @@ def _action_id(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", name)[:60] or "n"
 
 
+def _format_trigger_summary(flow: orcmod.Flow) -> str:
+    if not flow.trigger:
+        return "The flow is started manually or by an external trigger not described in the workflow metadata."
+    parts: list[str] = [f"This flow starts automatically via a `{flow.trigger.type}` trigger"]
+    if flow.trigger.frequency:
+        parts.append(f"running every `{flow.trigger.interval}` `{flow.trigger.frequency}`")
+    if flow.trigger.week_days:
+        parts.append(f"on {', '.join(flow.trigger.week_days)}")
+    if flow.trigger.hours:
+        parts.append(f"at {', '.join(flow.trigger.hours)}")
+    if flow.trigger.time_zone:
+        parts.append(f"(`{flow.trigger.time_zone}`)")
+    return " ".join(parts) + "."
+
+
+def _classify_actions(flow: orcmod.Flow) -> dict[str, list[orcmod.Action]]:
+    categories: dict[str, list[orcmod.Action]] = defaultdict(list)
+    for action in flow.actions:
+        lowered = action.name.lower()
+        if action.type == "InitializeVariable":
+            categories["setup"].append(action)
+        elif action.type in ("ParseJson", "Foreach") or "parse" in lowered or "filter" in lowered:
+            categories["prep"].append(action)
+        elif action.type == "OpenApiConnection" and action.operation_id == "RefreshDataflow":
+            categories["dataflow_refresh"].append(action)
+        elif action.type == "OpenApiConnection" and action.operation_id == "RefreshDataset":
+            categories["dataset_refresh"].append(action)
+        elif action.type in ("If", "Scope", "Foreach", "Switch"):
+            categories["decision"].append(action)
+        elif action.type == "OpenApiConnection" and action.operation_id in ("PostCardToConversation", "PostItem", "PatchItem", "SendEmailV2"):
+            categories["notify"].append(action)
+    return categories
+
+
+def _refresh_target_label(target: orcmod.RefreshTarget, lin: Lineage) -> str:
+    if target.kind == "dataflow":
+        name, _ = _resolve_dataflow_name(None, target, lin)
+    else:
+        name, _ = _resolve_dataset_name(target, lin)
+    if name:
+        return name
+    return target.object_id[:8] + ("…" if len(target.object_id) > 8 else "")
+
+
+def _unique_preserving_order(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _render_plain_english_walkthrough(flow: orcmod.Flow, lin: Lineage) -> list[str]:
+    categories = _classify_actions(flow)
+    dataflow_targets = [t for t in flow.refresh_targets if t.kind == "dataflow"]
+    dataset_targets = [t for t in flow.refresh_targets if t.kind == "dataset"]
+    teams_count = sum(1 for n in flow.notifications if n.channel == "teams")
+    sharepoint_count = sum(1 for n in flow.notifications if n.channel == "sharepoint-list")
+    email_count = sum(1 for n in flow.notifications if n.channel == "email")
+    failure_actions = [a for a in flow.actions if "fail" in a.name.lower() or a.branch == "else"]
+
+    out: list[str] = []
+    out.append("\n## Plain-English Walkthrough\n")
+    out.append("\n### Summary\n")
+    out.append(_format_trigger_summary(flow))
+    if dataflow_targets or dataset_targets:
+        summary_bits: list[str] = []
+        if dataflow_targets:
+            summary_bits.append(
+                f"refreshes {len(dataflow_targets)} dataflow target(s)"
+            )
+        if dataset_targets:
+            summary_bits.append(
+                f"refreshes {len(dataset_targets)} dataset target(s)"
+            )
+        out.append(
+            "In the normal path, it " + " and ".join(summary_bits)
+            + ", then posts status updates to the configured notification channels."
+        )
+    else:
+        out.append("This workflow does not contain any detectable dataflow or dataset refresh actions.")
+
+    out.append("\n### Step-by-Step Walkthrough\n")
+    out.append("| Step | What happens in normal language | Technical mapping |")
+    out.append("| --- | --- | --- |")
+
+    step_num = 1
+    out.append(
+        f"| {step_num} | {_format_trigger_summary(flow)} | "
+        + (f"`{flow.trigger.name}`" if flow.trigger else "workflow trigger metadata")
+        + " |"
+    )
+    step_num += 1
+
+    if categories["setup"] or categories["prep"]:
+        setup_actions = categories["setup"] + categories["prep"]
+        setup_names = ", ".join(f"`{a.name}`" for a in setup_actions[:6])
+        out.append(
+            f"| {step_num} | The flow prepares its working state by setting variables and reading any existing control or log records it needs before starting refreshes. | {setup_names or '-'} |"
+        )
+        step_num += 1
+
+    if dataflow_targets:
+        unique_labels = _unique_preserving_order([
+            _refresh_target_label(t, lin) for t in dataflow_targets
+        ])
+        labels = ", ".join(unique_labels[:5])
+        if len(unique_labels) > 5:
+            labels += f" and {len(unique_labels) - 5} more"
+        mappings = ", ".join(f"`{t.action_name}`" for t in dataflow_targets[:6])
+        out.append(
+            f"| {step_num} | The workflow starts the upstream dataflow refreshes needed for this reporting cycle: {md.md_escape_pipe(labels)}. | {mappings} |"
+        )
+        step_num += 1
+
+    decision_actions = [a for a in categories["decision"] if a.type == "If"]
+    if decision_actions:
+        decision_names = ", ".join(f"`{a.name}`" for a in decision_actions[:6])
+        out.append(
+            f"| {step_num} | After the upstream refreshes start, the workflow checks whether each required branch completed successfully and decides whether to continue or record a failure. | {decision_names} |"
+        )
+        step_num += 1
+
+    if dataset_targets:
+        unique_labels = _unique_preserving_order([
+            _refresh_target_label(t, lin) for t in dataset_targets
+        ])
+        labels = ", ".join(unique_labels[:5])
+        if len(unique_labels) > 5:
+            labels += f" and {len(unique_labels) - 5} more"
+        mappings = ", ".join(f"`{t.action_name}`" for t in dataset_targets[:6])
+        out.append(
+            f"| {step_num} | Once the prerequisite upstream steps have passed, the workflow starts the downstream dataset refreshes: {md.md_escape_pipe(labels)}. | {mappings} |"
+        )
+        step_num += 1
+
+    if teams_count or sharepoint_count or email_count:
+        notification_parts: list[str] = []
+        if sharepoint_count:
+            notification_parts.append(f"logs to SharePoint ({sharepoint_count} action(s))")
+        if teams_count:
+            notification_parts.append(f"posts Teams updates ({teams_count} action(s))")
+        if email_count:
+            notification_parts.append(f"sends email ({email_count} action(s))")
+        mapping_actions = ", ".join(f"`{a.name}`" for a in categories["notify"][:6])
+        out.append(
+            f"| {step_num} | Throughout the run, the workflow records progress and outcomes: it "
+            + ", ".join(notification_parts)
+            + f". | {mapping_actions or '-'} |"
+        )
+        step_num += 1
+
+    out.append("\n### Happy Path\n")
+    happy_bits: list[str] = ["the trigger starts on schedule"]
+    if dataflow_targets:
+        happy_bits.append("the required upstream dataflows refresh successfully")
+    if dataset_targets:
+        happy_bits.append("the downstream dataset refreshes are started")
+    if teams_count or sharepoint_count or email_count:
+        happy_bits.append("status notifications are sent to the configured channels")
+    out.append("In the expected run, " + ", then ".join(happy_bits) + ".")
+
+    out.append("\n### Failure Handling in Plain English\n")
+    if failure_actions:
+        failure_names = ", ".join(f"`{a.name}`" for a in failure_actions[:8])
+        out.append(
+            "If one of the monitored refresh steps fails, the workflow records that outcome and sends failure notifications instead of continuing down the normal success path."
+        )
+        out.append(f"The main failure-path actions detected in the definition are: {failure_names}.")
+    else:
+        out.append("No explicit failure branch could be detected from the parsed action graph.")
+
+    return out
+
+
 def _render_sequence_diagram(flow: orcmod.Flow) -> list[str]:
     """A Mermaid `flowchart TD` derived from `runAfter`."""
     out: list[str] = ["```mermaid", "flowchart TD"]
@@ -161,6 +339,9 @@ def render_orchestration(lin: Lineage, cfg: Config) -> dict[str, str]:
                 body.append(f"- **Time zone:** `{f.trigger.time_zone}`")
         else:
             body.append("- _No trigger declared in the workflow definition._")
+        body.append("")
+
+        body.extend(_render_plain_english_walkthrough(f, lin))
         body.append("")
 
         body.append("\n## Refresh Sequence Diagram\n")

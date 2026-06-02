@@ -12,7 +12,7 @@ PLACEHOLDER = "{{PLACEHOLDER}}"
 UNKNOWN = "**Unknown — needs business input**"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DOCS = REPO_ROOT / "docs"
+DOCS = REPO_ROOT / "model-docs"
 
 TODAY = date.today().isoformat()
 

@@ -168,7 +168,7 @@ def _check_orchestration_coverage(
     if not flows:
         return True, "No orchestration flows configured."
     if not folder.exists():
-        return False, "docs/orchestration/ does not exist."
+        return False, "model-docs/orchestration/ does not exist."
     expected = {md.safe_filename(f.name) + ".md" for f in flows}
     actual = {p.name for p in folder.glob("*.md")}
     missing = sorted(expected - actual)

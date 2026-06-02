@@ -1,6 +1,6 @@
 """Per-repo configuration loader for the docgen pipeline.
 
-The engine reads a single `docs/.docgen.toml` from the repo root. Every
+The engine reads a single `model-docs/.docgen.toml` from the repo root. Every
 field is optional; sensible defaults are applied so the engine still runs
 on a brand-new repo with no config file.
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 # --- Convention paths ------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DOCS = REPO_ROOT / "docs"
+DOCS = REPO_ROOT / "model-docs"
 CONFIG_PATH = DOCS / ".docgen.toml"
 
 

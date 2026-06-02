@@ -1,11 +1,11 @@
 """Render Phase 1 inventory documents (config-driven, model-agnostic):
 
-* docs/README.md
-* docs/architecture/overview.md
-* docs/lineage/lineage.md
-* docs/CHANGELOG.md
+* model-docs/README.md
+* model-docs/architecture/overview.md
+* model-docs/lineage/lineage.md
+* model-docs/CHANGELOG.md
 
-All repo-specific narratives come from ``docs/.docgen.toml`` via
+All repo-specific narratives come from ``model-docs/.docgen.toml`` via
 :mod:`scripts.docgen.config`. The engine emits neutral placeholders when
 narrative fields are empty.
 """
@@ -69,7 +69,7 @@ def _exec_summary_bullets(lin: Lineage, cfg: Config) -> list[str]:
         f"**Reports:** {len(lin.reports)} thin report(s) with {page_count} pages and ~{visual_count} visuals total; built on the same `.pbip` semantic model.",
         f"**Upstream dataflows referenced:** {df_ref_count} unique dataflow(s) across workspace(s): {ws_line}.",
         f"**Dataflow JSON exports available:** {df_export_count} of the referenced dataflows are exported under [`dataflows/`](../dataflows/) for full M-code documentation.",
-        f"**Orchestration flows documented:** {flow_count} (see [`docs/orchestration/`](orchestration/)).",
+        f"**Orchestration flows documented:** {flow_count} (see [`model-docs/orchestration/`](orchestration/)).",
     ]
     if cfg.narratives.upstream_platforms:
         bullets.append(f"**Primary upstream platform(s):** {cfg.narratives.upstream_platforms.split('.')[0].strip()}.")
@@ -105,7 +105,7 @@ def render_readme(lin: Lineage, cfg: Config) -> str:
         body.append(cfg.solution.purpose.strip() + "\n")
     else:
         body.append(
-            f"`{lin.model.name}` is a Power BI solution comprising a semantic model (`.pbip` / TMDL), one or more thin reports, and a published Power BI App. {md.PLACEHOLDER} _(populate `[solution].purpose` in `docs/.docgen.toml`)_\n"
+            f"`{lin.model.name}` is a Power BI solution comprising a semantic model (`.pbip` / TMDL), one or more thin reports, and a published Power BI App. {md.PLACEHOLDER} _(populate `[solution].purpose` in `model-docs/.docgen.toml`)_\n"
         )
 
     body.append("\n## Executive Summary\n")
@@ -227,13 +227,13 @@ def render_architecture(lin: Lineage, cfg: Config) -> str:
     if cfg.narratives.upstream_platforms:
         body.append("- **Upstream platforms.** " + cfg.narratives.upstream_platforms.strip())
     else:
-        body.append(f"- **Upstream platforms.** {md.PLACEHOLDER} _(populate `[narratives].upstream_platforms` in `docs/.docgen.toml`)_")
+        body.append(f"- **Upstream platforms.** {md.PLACEHOLDER} _(populate `[narratives].upstream_platforms` in `model-docs/.docgen.toml`)_")
     body.append(
-        f"- **Power BI Dataflows.** {len(lin.dataflows)} exported dataflows under [`dataflows/`](../../dataflows/) prepare conformed entities for the semantic model. Each dataflow is documented in [`docs/dataflows/`](../dataflows/)."
+        f"- **Power BI Dataflows.** {len(lin.dataflows)} exported dataflows under [`dataflows/`](../../dataflows/) prepare conformed entities for the semantic model. Each dataflow is documented in [`model-docs/dataflows/`](../dataflows/)."
     )
     if lin.orchestration_flows:
         body.append(
-            f"- **Orchestration.** {len(lin.orchestration_flows)} workflow(s) trigger and monitor dataflow / dataset refreshes and post notifications. See [`docs/orchestration/`](../orchestration/)."
+            f"- **Orchestration.** {len(lin.orchestration_flows)} workflow(s) trigger and monitor dataflow / dataset refreshes and post notifications. See [`model-docs/orchestration/`](../orchestration/)."
         )
     body.append(
         f"- **Semantic model (`{model.name}`).** Import-mode tabular model containing {len(model.tables)} tables, "
@@ -246,11 +246,11 @@ def render_architecture(lin: Lineage, cfg: Config) -> str:
     )
     if cfg.app.name:
         body.append(
-            f"- **Power BI App (`{cfg.app.name}`).** {cfg.app.purpose or 'Distribution wrapper packaging the report(s) for end users.'} See [`docs/app/`](../app/)."
+            f"- **Power BI App (`{cfg.app.name}`).** {cfg.app.purpose or 'Distribution wrapper packaging the report(s) for end users.'} See [`model-docs/app/`](../app/)."
         )
     else:
         body.append(
-            f"- **Power BI App.** Distribution wrapper packaging the report(s) for end users. App-specific metadata is captured in [`docs/app/`](../app/)."
+            f"- **Power BI App.** Distribution wrapper packaging the report(s) for end users. App-specific metadata is captured in [`model-docs/app/`](../app/)."
         )
     body.append("")
 
@@ -264,7 +264,7 @@ def render_architecture(lin: Lineage, cfg: Config) -> str:
     body.append(f"- Source systems that feed the documented platforms (operational ERP / OMS / e-commerce platforms) — out of scope. {md.PLACEHOLDER}")
     body.append("- Adjacent reports owned by other teams that may consume the same dataflows.")
     body.append("- Workspace-level access control configuration (managed via Entra ID groups).")
-    body.append("- Development / test report files explicitly excluded via `[paths].excluded_report_definitions` in `docs/.docgen.toml`.")
+    body.append("- Development / test report files explicitly excluded via `[paths].excluded_report_definitions` in `model-docs/.docgen.toml`.")
     body.append("")
 
     body.append("\n## Key Stakeholders\n")
@@ -380,7 +380,7 @@ def render_lineage(lin: Lineage, cfg: Config) -> str:
         for i, bullet in enumerate(cfg.narratives.lineage_narrative, 1):
             body.append(f"{i}. {bullet}")
     else:
-        body.append(f"_{md.PLACEHOLDER} — populate `[narratives].lineage_narrative` in `docs/.docgen.toml`._")
+        body.append(f"_{md.PLACEHOLDER} — populate `[narratives].lineage_narrative` in `model-docs/.docgen.toml`._")
     body.append("")
 
     body.append("\n## Dependency Table\n")
@@ -417,7 +417,7 @@ def render_lineage(lin: Lineage, cfg: Config) -> str:
         for note in cfg.narratives.change_impact_notes:
             body.append(f"- {note}")
     else:
-        body.append(f"- {md.PLACEHOLDER} _(populate `[narratives].change_impact_notes` in `docs/.docgen.toml`)_")
+        body.append(f"- {md.PLACEHOLDER} _(populate `[narratives].change_impact_notes` in `model-docs/.docgen.toml`)_")
     body.append("")
     return "\n".join(body)
 
@@ -436,14 +436,14 @@ follow the convention used by
 ## [{md.TODAY}] — Initial documentation generation
 
 - **Added:** First end-to-end documentation set generated from the PBIP
-  repository by `scripts/docgen/generate.py`. Covers `docs/README.md`,
-  `docs/architecture/overview.md`, `docs/lineage/lineage.md`, `docs/model/`,
-  `docs/measures/`, `docs/glossary.md`, `docs/data-sources/`,
-  `docs/dataflows/`, `docs/orchestration/`, `docs/reports/`, `docs/app/`,
-  `docs/ops/runbook.md`, and `docs/ReleaseNotes.md`.
+  repository by `scripts/docgen/generate.py`. Covers `model-docs/README.md`,
+  `model-docs/architecture/overview.md`, `model-docs/lineage/lineage.md`, `model-docs/model/`,
+  `model-docs/measures/`, `model-docs/glossary.md`, `model-docs/data-sources/`,
+  `model-docs/dataflows/`, `model-docs/orchestration/`, `model-docs/reports/`, `model-docs/app/`,
+  `model-docs/ops/runbook.md`, and `model-docs/ReleaseNotes.md`.
 - **Added:** Documentation generator package `scripts/docgen/` with TMDL,
   PBIR, dataflow, orchestration, lineage, and validation modules.
-- **Added:** Per-repo configuration at `docs/.docgen.toml` carrying solution
+- **Added:** Per-repo configuration at `model-docs/.docgen.toml` carrying solution
   display name, workspace IDs, narratives, acronyms, and data-source detail.
 - **Author:** {md.PLACEHOLDER}
 """

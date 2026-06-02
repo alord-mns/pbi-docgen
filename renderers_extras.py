@@ -442,7 +442,7 @@ def render_app(lin: Lineage, cfg: Config) -> dict[str, str]:
     body.append("2. Pull request review by the Lead Power BI Developer.")
     body.append("3. Merge to `main`; deploy to the Power BI workspace via deployment pipeline / manual publish.")
     body.append("4. Update the app via *Power BI Service → Workspace → Update app*.")
-    body.append("5. Update [`docs/CHANGELOG.md`](../CHANGELOG.md) and [`docs/ReleaseNotes.md`](../ReleaseNotes.md).")
+    body.append("5. Update [`model-docs/CHANGELOG.md`](../CHANGELOG.md) and [`model-docs/ReleaseNotes.md`](../ReleaseNotes.md).")
     body.append(f"6. Notify users via {md.PLACEHOLDER}.")
     body.append("")
 
@@ -524,7 +524,7 @@ def render_runbook(lin: Lineage, cfg: Config) -> str:
             "3. Compare row counts vs the upstream Databricks table.",
             "**Resolution steps.**",
             "1. If the upstream is correct, raise an incident with the dataflow owner.",
-            "2. If the model logic is at fault, open a PR fixing the measure / dataflow and add a regression test by capturing pre/post numbers in `docs/CHANGELOG.md`.",
+            "2. If the model logic is at fault, open a PR fixing the measure / dataflow and add a regression test by capturing pre/post numbers in `model-docs/CHANGELOG.md`.",
             f"**Escalation.** {md.PLACEHOLDER}",
         ]),
         ("Performance Degradation", [

@@ -109,7 +109,7 @@ def _check_secrets(files: list[Path]) -> tuple[bool, str]:
 
 def _check_audience_lines(files: list[Path]) -> tuple[bool, str]:
     missing: list[str] = []
-    excluded = {"CHANGELOG.md", "ReleaseNotes.md", "dataflow-references.md"}
+    excluded = {"CHANGELOG.md", "ReleaseNotes.md", "dataflow-references.md", "generation-log.md"}
     for p in files:
         if p.name in excluded:
             continue

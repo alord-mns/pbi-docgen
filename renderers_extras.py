@@ -572,7 +572,7 @@ def render_runbook(lin: Lineage, cfg: Config) -> str:
     body.append("\n## Backup & Recovery\n")
     body.append("- **Source of truth:** this Git repository — every PBIP / TMDL change is committed. Restore by checking out a known-good commit and re-publishing.")
     body.append("- **Service-side backup:** Power BI does not provide point-in-time backups; if a published model is corrupted, redeploy from PBIP.")
-    body.append("- **Manual export:** [`scripts/02_export_selected_dataflows.ps1`](../../scripts/02_export_selected_dataflows.ps1) and [`scripts/01_list_dataflows.py`](../../scripts/01_list_dataflows.py) are used to refresh the `dataflows/` JSON exports for documentation.")
+    body.append("- **Manual export:** dataflow JSON under [`dataflows/`](../../dataflows/) is refreshed periodically from the Power BI Service to keep documentation in sync.")
     body.append("")
 
     body.append("\n## Compliance Checks\n")

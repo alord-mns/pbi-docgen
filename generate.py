@@ -10,8 +10,9 @@ narratives, data-source descriptions, acronyms) is loaded from
 """
 from __future__ import annotations
 
-import shutil
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from . import config as configmod
@@ -29,19 +30,76 @@ from . import renderers_overview as ro
 REPO_ROOT = md.REPO_ROOT
 DOCS = md.DOCS
 
+GENERATION_LOG = "generation-log.md"
+
 # Files at the docs root that must be preserved when re-generating.
-PROTECTED = {"documentation_req.md", "dataflow-references.md", ".docgen.toml"}
+PROTECTED = {"documentation_req.md", "dataflow-references.md", ".docgen.toml", GENERATION_LOG}
 
 
-def _clean_dir(path: Path) -> None:
-    """Remove generated subfolders without touching protected files at the docs root."""
-    if not path.exists():
-        return
-    for entry in path.iterdir():
-        if entry.is_dir():
-            shutil.rmtree(entry)
-        elif entry.name not in PROTECTED:
-            entry.unlink()
+def _sweep_orphans(root: Path, generated: set[Path]) -> list[Path]:
+    """Delete files under ``root`` that were not written during this run.
+
+    Protected files (PROTECTED set, matched by name) are always kept. Empty
+    directories left behind by the sweep are removed.
+    """
+    removed: list[Path] = []
+    if not root.exists():
+        return removed
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        if p.name in PROTECTED:
+            continue
+        if p.resolve() not in generated:
+            p.unlink()
+            removed.append(p)
+    # Prune empty directories (bottom-up).
+    for d in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda x: -len(x.parts)):
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+    return removed
+
+
+def _append_generation_log(
+    log_path: Path,
+    changed: list[Path],
+    removed: list[Path],
+    unchanged: int,
+) -> None:
+    """Prepend a dated entry to the generation log. Creates the file if absent."""
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rel = lambda p: str(p.relative_to(REPO_ROOT)).replace("\\", "/")
+    lines = [f"## {ts}\n"]
+    lines.append(f"- changed: {len(changed)}")
+    lines.append(f"- removed: {len(removed)}")
+    lines.append(f"- unchanged: {unchanged}")
+    if changed or removed:
+        lines.append("")
+        for p in sorted(changed):
+            lines.append(f"- ~ `{rel(p)}`")
+        for p in sorted(removed):
+            lines.append(f"- \u2212 `{rel(p)}`")
+    new_entry = "\n".join(lines) + "\n\n"
+
+    header = (
+        "# Docgen Generation Log\n\n"
+        "Append-only record of `python -m scripts.docgen.generate` runs. "
+        "This file is protected from the per-run sweep and persists across runs.\n\n"
+        "Newest entries first. `changed` includes both newly created and modified "
+        "files; `removed` are files that existed before this run but were not "
+        "produced by it (typically the result of renamed or deleted source artefacts).\n\n"
+    )
+    if log_path.exists():
+        existing = log_path.read_text(encoding="utf-8")
+        # Strip any prior header so we can re-prepend a single canonical one.
+        body = existing.split("## ", 1)
+        prior_entries = ("## " + body[1]) if len(body) == 2 else ""
+    else:
+        prior_entries = ""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(header + new_entry + prior_entries, encoding="utf-8")
 
 
 def _resolve_semantic_model(cfg: configmod.Config) -> Path:
@@ -137,41 +195,84 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(lin.short_id_to_name)} dataflow name resolutions"
     )
 
-    # ---- Wipe previous generation (keep protected requirements files) ----
-    print(f"[docgen] cleaning {DOCS}")
-    _clean_dir(DOCS)
+    # ---- Write phase (skip files whose content is unchanged) ----
+    generated: set[Path] = set()
+    changed: list[Path] = []
+
+    def emit(path: Path, content: str) -> None:
+        generated.add(path.resolve())
+        if md.write(path, content):
+            changed.append(path)
 
     # ---- Phase 1 — inventory ----
-    md.write(DOCS / "README.md", ro.render_readme(lin, cfg))
-    md.write(DOCS / "architecture" / "overview.md", ro.render_architecture(lin, cfg))
-    md.write(DOCS / "lineage" / "lineage.md", ro.render_lineage(lin, cfg))
-    md.write(DOCS / "CHANGELOG.md", ro.render_changelog(cfg))
+    readme_content = ro.render_readme(lin, cfg)
+    readme_path = DOCS / "README.md"
+    # Preserve any VALIDATION block previously injected by `validate.py` so
+    # successive generate / validate runs do not ping-pong the same file.
+    if readme_path.exists():
+        existing = readme_path.read_text(encoding="utf-8")
+        m = re.search(
+            r"<!-- VALIDATION:START -->.*?<!-- VALIDATION:END -->",
+            existing,
+            flags=re.DOTALL,
+        )
+        if m:
+            readme_content = re.sub(
+                r"<!-- VALIDATION:START -->.*?<!-- VALIDATION:END -->",
+                m.group(0),
+                readme_content,
+                flags=re.DOTALL,
+            )
+    emit(readme_path, readme_content)
+    emit(DOCS / "architecture" / "overview.md", ro.render_architecture(lin, cfg))
+    emit(DOCS / "lineage" / "lineage.md", ro.render_lineage(lin, cfg))
+    emit(DOCS / "CHANGELOG.md", ro.render_changelog(cfg))
 
     # ---- Phase 2 — model + measures + glossary ----
     model_filename = md.safe_filename(model.name) + ".md"
-    md.write(DOCS / "model" / model_filename, rm.render_model(lin))
+    emit(DOCS / "model" / model_filename, rm.render_model(lin))
     measures_files = rm.render_measures(lin)
     for fname, content in measures_files.items():
-        md.write(DOCS / "measures" / fname, content)
-    md.write(DOCS / "glossary.md", rx.render_glossary(lin, cfg))
+        emit(DOCS / "measures" / fname, content)
+    emit(DOCS / "glossary.md", rx.render_glossary(lin, cfg))
 
     # ---- Phase 3 — sources, dataflows, orchestration ----
     for fname, content in rx.render_data_sources(lin, cfg).items():
-        md.write(DOCS / "data-sources" / fname, content)
+        emit(DOCS / "data-sources" / fname, content)
     for fname, content in rx.render_dataflows(lin).items():
-        md.write(DOCS / "dataflows" / fname, content)
+        emit(DOCS / "dataflows" / fname, content)
     for fname, content in ro_orc.render_orchestration(lin, cfg).items():
-        md.write(DOCS / "orchestration" / fname, content)
+        emit(DOCS / "orchestration" / fname, content)
 
     # ---- Phase 4 — reports & app ----
     for fname, content in rx.render_reports(lin).items():
-        md.write(DOCS / "reports" / fname, content)
+        emit(DOCS / "reports" / fname, content)
     for fname, content in rx.render_app(lin, cfg).items():
-        md.write(DOCS / "app" / fname, content)
+        emit(DOCS / "app" / fname, content)
 
     # ---- Phase 5 — runbook + release notes ----
-    md.write(DOCS / "ops" / "runbook.md", rx.render_runbook(lin, cfg))
-    md.write(DOCS / "ReleaseNotes.md", rx.render_release_notes())
+    emit(DOCS / "ops" / "runbook.md", rx.render_runbook(lin, cfg))
+    emit(DOCS / "ReleaseNotes.md", rx.render_release_notes())
+
+    # ---- Sweep orphans (files that existed but were not produced this run) ----
+    removed = _sweep_orphans(DOCS, generated)
+    unchanged = len(generated) - len(changed)
+
+    # ---- Append generation log (protected from sweep) ----
+    _append_generation_log(DOCS / GENERATION_LOG, changed, removed, unchanged)
+
+    print(
+        f"[docgen] write summary: {len(changed)} changed \u00b7 "
+        f"{len(removed)} removed \u00b7 {unchanged} unchanged"
+    )
+    if changed:
+        for p in sorted(changed)[:10]:
+            print(f"[docgen]   ~ {p.relative_to(REPO_ROOT)}")
+        if len(changed) > 10:
+            print(f"[docgen]   \u2026 and {len(changed) - 10} more")
+    if removed:
+        for p in sorted(removed)[:10]:
+            print(f"[docgen]   \u2212 {p.relative_to(REPO_ROOT)}")
 
     print("[docgen] done")
     print("[docgen] run `python -m scripts.docgen.validate` to enforce quality gates")

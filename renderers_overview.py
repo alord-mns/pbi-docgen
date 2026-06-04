@@ -357,14 +357,14 @@ def render_lineage(lin: Lineage, cfg: Config) -> str:
     for tname, refs in lin.table_to_dataflows.items():
         if tname not in drawn_tables:
             continue
-        for key in refs:
+        for key in sorted(refs):
             df_id = key.split("::", 1)[1]
             if df_id in df_nodes:
                 body.append(f"  {df_nodes[df_id]} --> {table_nodes[tname]}")
     for tname, pages in lin.table_to_pages.items():
         if tname not in drawn_tables:
             continue
-        for page_label in pages:
+        for page_label in sorted(pages):
             if page_label not in drawn_pages:
                 continue
             body.append(f"  {table_nodes[tname]} --> {page_nodes[page_label]}")

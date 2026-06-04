@@ -40,12 +40,28 @@ def slugify(name: str) -> str:
     return s
 
 
-def write(path: Path, content: str) -> None:
-    """Write ``content`` to ``path``, creating parent directories."""
+_REVISION_LINE_RE = re.compile(r"^_Last generated: \d{4}-\d{2}-\d{2}_\s*$", re.MULTILINE)
+
+
+def _normalise_for_compare(text: str) -> str:
+    return _REVISION_LINE_RE.sub("", text)
+
+
+def write(path: Path, content: str) -> bool:
+    """Write ``content`` to ``path``. Returns True if the file was created or
+    changed, False if existing content was byte-identical (after ignoring the
+    daily ``_Last generated:`` revision line). Skipping unchanged writes
+    preserves file mtimes so ``git status`` reflects real content changes only.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if not content.endswith("\n"):
         content += "\n"
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if _normalise_for_compare(existing) == _normalise_for_compare(content):
+            return False
     path.write_text(content, encoding="utf-8")
+    return True
 
 
 def code_block(text: str, lang: str = "") -> str:

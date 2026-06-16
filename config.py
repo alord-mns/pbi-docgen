@@ -28,6 +28,7 @@ _DEFAULT_PATHS = {
     "excluded_report_definitions": ["src/semantic-model/*.Report/definition"],
     "dataflow_exports": "dataflows/*.json",
     "orchestration_definitions": ["orchestration/**/definition.json"],
+    "sql_exports": "sql/*.sql",
 }
 
 
@@ -72,6 +73,7 @@ class Paths:
     orchestration_definitions: list[str] = field(
         default_factory=lambda: list(_DEFAULT_PATHS["orchestration_definitions"])
     )
+    sql_exports: str = _DEFAULT_PATHS["sql_exports"]
 
 
 @dataclass
@@ -89,6 +91,20 @@ class App:
 
 
 @dataclass
+class MeasureRules:
+    """Naming conventions used to classify measures by role.
+
+    ``selector_prefixes`` identify picker / driver measures (a router is any
+    measure that branches on one of these). ``base_prefixes`` identify atomic
+    source-wrapper measures. Both are solution conventions, so they live here
+    rather than in engine code.
+    """
+
+    selector_prefixes: list[str] = field(default_factory=list)
+    base_prefixes: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     solution: Solution = field(default_factory=Solution)
     workspaces: Workspaces = field(default_factory=Workspaces)
@@ -98,6 +114,7 @@ class Config:
     headline_metrics: list[str] = field(default_factory=list)
     data_sources: list[DataSource] = field(default_factory=list)
     app: App = field(default_factory=App)
+    measures: MeasureRules = field(default_factory=MeasureRules)
     raw: dict = field(default_factory=dict)
 
     # Convenience accessors -------------------------------------------------
@@ -145,7 +162,7 @@ def load(path: Path | None = None) -> Config:
     headline = (data.get("headline_metrics") or {}).get("names", []) or []
     app_t = data.get("app", {}) or {}
     sources_t = data.get("data_sources", []) or []
-
+    measures_t = data.get("measures", {}) or {}
     cfg = Config(
         solution=Solution(
             display_name=sol.get("display_name", ""),
@@ -185,6 +202,7 @@ def load(path: Path | None = None) -> Config:
                     _DEFAULT_PATHS["orchestration_definitions"],
                 )
             ),
+            sql_exports=paths_t.get("sql_exports", _DEFAULT_PATHS["sql_exports"]),
         ),
         narratives=Narratives(
             upstream_platforms=(nar.get("upstream_platforms", "") or "").strip(),
@@ -198,7 +216,10 @@ def load(path: Path | None = None) -> Config:
             purpose=app_t.get("purpose", ""),
             audience=app_t.get("audience", ""),
         ),
-        data_sources=[
+        measures=MeasureRules(
+            selector_prefixes=list(measures_t.get("selector_prefixes", []) or []),
+            base_prefixes=list(measures_t.get("base_prefixes", []) or []),
+        ),        data_sources=[
             DataSource(
                 name=ds.get("name", "Unnamed source"),
                 purpose=ds.get("purpose", ""),
@@ -223,6 +244,7 @@ __all__ = [
     "Narratives",
     "DataSource",
     "App",
+    "MeasureRules",
     "load",
     "REPO_ROOT",
     "DOCS",

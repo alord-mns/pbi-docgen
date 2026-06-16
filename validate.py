@@ -1,229 +1,227 @@
-"""Documentation quality-gate validator (per documentation_req.md §4).
+"""Documentation quality-gate validator for the card-based agent knowledge base.
 
 Run:
 
     python -m scripts.docgen.validate
 
-Outputs a pass/fail report and exits non-zero if any gate fails.  The
-result is also embedded into ``docs/README.md`` between the
-``<!-- VALIDATION:START -->`` / ``<!-- VALIDATION:END -->`` markers so
-that the home document always reflects the latest run.
+The knowledge base is four flat files of self-sufficient cards
+(``00-overview.md`` … ``03-reports.md``). This validator enforces that the
+cards are addressable, cross-referenceable, complete, and leak-free. It is
+read-only over the documentation — it prints a pass/fail report and exits
+non-zero if any gate fails; it never mutates the generated files.
 """
 from __future__ import annotations
 
 import re
-import sys
-from collections import Counter
 from pathlib import Path
 
+from . import config as configmod
 from . import dataflow as dfmod
+from . import dax_refs
 from . import lineage as lineagemod
 from . import md
 from . import orchestration as orcmod
 from . import pbir as pbirmod
 from . import tmdl
-from . import config as configmod
+from . import cards
 from .generate import (
     DOCS,
     _resolve_report_definitions,
     _resolve_semantic_model,
+    _visual_usage,
 )
 
+
+KB_FILES = [
+    "00-overview.md",
+    "01-model-and-metrics.md",
+    "02-data-pipeline.md",
+    "03-reports.md",
+]
 
 SECRET_PATTERNS = [
     re.compile(r"\bpassword\s*[:=]\s*['\"][^'\"\n]{1,}['\"]", re.IGNORECASE),
     re.compile(r"\b(?:api[_-]?key|secret|token)\s*[:=]\s*['\"][A-Za-z0-9+/_=-]{8,}['\"]", re.IGNORECASE),
     re.compile(r"\bAccountKey\s*=\s*[A-Za-z0-9+/=]{20,}"),
-    re.compile(r"\b(?:eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{5,})\b"),  # JWT
+    re.compile(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{5,}\b"),  # JWT
 ]
+EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+TEAMS_THREAD_RE = re.compile(r"19:[A-Za-z0-9_-]+@thread\.v2")
+
+_ANCHOR_RE = re.compile(r'<a id="([^"]+)"></a>')
+_LINK_RE = re.compile(r"\]\(#([a-z0-9-]+)\)")
 
 
-def _gather_md_files(root: Path) -> list[Path]:
-    return [
-        p for p in root.rglob("*.md")
-        if p.name not in {"documentation_req.md"}
-    ]
+# ---------------------------------------------------------------------------
+# Card-block model
+# ---------------------------------------------------------------------------
+class CardBlock:
+    __slots__ = ("anchor", "title", "kind", "text")
+
+    def __init__(self, anchor: str, title: str, kind: str, text: str) -> None:
+        self.anchor = anchor
+        self.title = title
+        self.kind = kind
+        self.text = text
 
 
-def _check_measure_coverage(model: tmdl.Model, files: list[Path]) -> tuple[bool, str]:
-    measures = [(m.table, m.name) for t in model.tables for m in t.measures]
-    measure_blob = "\n".join(p.read_text(encoding="utf-8") for p in files if "measures" in str(p))
+def _split_cards(text: str) -> list[CardBlock]:
+    """Slice a bundle into card blocks keyed by their anchor."""
+    blocks: list[CardBlock] = []
+    matches = list(_ANCHOR_RE.finditer(text))
+    for i, m in enumerate(matches):
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        chunk = text[start:end]
+        anchor = m.group(1)
+        title_m = re.search(r"^## (.+)$", chunk, flags=re.MULTILINE)
+        kind_m = re.search(r"^\*\*Type:\*\* (.+)$", chunk, flags=re.MULTILINE)
+        title = title_m.group(1).strip() if title_m else ""
+        kind = kind_m.group(1).strip() if kind_m else ""
+        blocks.append(CardBlock(anchor, title, kind, chunk))
+    return blocks
+
+
+# ---------------------------------------------------------------------------
+# Gates
+# ---------------------------------------------------------------------------
+def _check_files_present(docs: Path) -> tuple[bool, str]:
+    missing = [f for f in KB_FILES if not (docs / f).exists()]
+    if missing:
+        return False, f"Missing knowledge-base file(s): {missing}"
+    return True, f"All {len(KB_FILES)} knowledge-base files present."
+
+
+def _check_anchor_uniqueness(blobs: dict[str, str]) -> tuple[bool, str]:
+    seen: dict[str, str] = {}
+    dupes: list[str] = []
+    total = 0
+    for name in sorted(blobs):
+        for a in _ANCHOR_RE.findall(blobs[name]):
+            total += 1
+            if a in seen:
+                dupes.append(f"{a} ({seen[a]} & {name})")
+            else:
+                seen[a] = name
+    if dupes:
+        return False, f"{len(dupes)} duplicate anchor(s) — sample: {dupes[:5]}"
+    return True, f"All {total} card anchors are unique across the knowledge base."
+
+
+def _check_link_integrity(blobs: dict[str, str]) -> tuple[bool, str]:
+    anchors: set[str] = set()
+    for text in blobs.values():
+        anchors |= set(_ANCHOR_RE.findall(text))
+    dangling: list[str] = []
+    for name in sorted(blobs):
+        for target in sorted(set(_LINK_RE.findall(blobs[name]))):
+            if target not in anchors:
+                dangling.append(f"{name} -> #{target}")
+    if dangling:
+        return False, f"{len(dangling)} dangling link(s) — sample: {dangling[:5]}"
+    return True, "Every internal card link resolves to an existing anchor."
+
+
+def _check_measure_coverage(cls, anchors: set[str], blob_metrics: str) -> tuple[bool, str]:
     missing: list[str] = []
-    for _table, name in measures:
-        # The measure docs render names as ### `Name`.
-        needle = f"### `{name}`"
-        if needle not in measure_blob:
-            missing.append(name)
-    if not missing:
-        return True, f"All {len(measures):,} measures documented."
-    return False, f"{len(missing)}/{len(measures):,} measures missing — sample: {missing[:5]}"
+    for mc in cls.of_role(dax_refs.ROLE_ROUTER):
+        if cards.card_anchor("concept", mc.name) not in anchors:
+            missing.append(f"router:{mc.name}")
+    for role in (dax_refs.ROLE_METRIC, dax_refs.ROLE_COMPUTE):
+        for mc in cls.of_role(role):
+            if cards.card_anchor("measure", mc.name) not in anchors:
+                missing.append(f"{role}:{mc.name}")
+    for mc in cls.of_role(dax_refs.ROLE_BASE):
+        if f"`{mc.name}`" not in blob_metrics:
+            missing.append(f"base:{mc.name}")
+    total = sum(
+        len(cls.of_role(r))
+        for r in (
+            dax_refs.ROLE_ROUTER,
+            dax_refs.ROLE_METRIC,
+            dax_refs.ROLE_COMPUTE,
+            dax_refs.ROLE_BASE,
+        )
+    )
+    if missing:
+        return False, f"{len(missing)}/{total} measures without a card/fold — sample: {missing[:5]}"
+    return True, f"All {total} classified measures have a card or are folded into a table card."
 
 
-def _check_unresolved_unknowns(files: list[Path]) -> tuple[bool, str]:
-    bad: list[tuple[Path, int, str]] = []
-    for p in files:
-        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
-            stripped = line.strip()
-            # TODO without flag, or empty placeholder bullets
-            if re.search(r"\bTODO\b", stripped) and "{{PLACEHOLDER}}" not in stripped:
-                bad.append((p, i, stripped))
-            if re.match(r"-\s*$", stripped):
-                bad.append((p, i, "(empty bullet)"))
-    if not bad:
-        return True, "No unresolved TODOs or empty bullets."
-    return False, f"{len(bad)} issues — sample: {bad[:3]}"
+def _check_concept_routing(metric_cards: list[CardBlock]) -> tuple[bool, str]:
+    bad: list[str] = []
+    n = 0
+    for b in metric_cards:
+        if b.kind.startswith("Metric concept"):
+            n += 1
+            if "### Routing" not in b.text:
+                bad.append(b.title)
+    if bad:
+        return False, f"{len(bad)} concept card(s) missing a routing table — sample: {bad[:5]}"
+    return True, f"All {n} concept (router) cards carry a routing table."
 
 
-def _check_name_consistency(model: tmdl.Model, files: list[Path]) -> tuple[bool, str]:
-    blob = "\n".join(p.read_text(encoding="utf-8") for p in files)
-    # Sample 10 random table names — they should all appear at least once
-    missing = [t.name for t in model.tables if t.name not in blob][:5]
-    if not missing:
-        return True, f"All {len(model.tables)} table names appear in the documentation."
-    return False, f"Tables missing from docs: {missing}"
+def _check_source_trace(metric_cards: list[CardBlock]) -> tuple[bool, str]:
+    bad: list[str] = []
+    n = 0
+    for b in metric_cards:
+        if "Measure (metric)" in b.kind:
+            n += 1
+            if "### Source trace" not in b.text:
+                bad.append(b.title)
+    if bad:
+        return False, f"{len(bad)} metric card(s) missing a source-trace section — sample: {bad[:5]}"
+    return True, f"All {n} metric cards carry a source-trace section."
 
 
-def _check_lineage_completeness(model: tmdl.Model, lineage_doc: Path) -> tuple[bool, str]:
-    if not lineage_doc.exists():
-        return False, "lineage.md does not exist"
-    text = lineage_doc.read_text(encoding="utf-8")
-    # Lineage diagram should mention every model fact table at least
-    fact_tables = [t.name for t in model.tables if t.name.startswith("fact")]
-    missing = [f for f in fact_tables if f not in text]
-    if not missing:
-        return True, f"All {len(fact_tables)} fact tables present in lineage."
-    return False, f"Fact tables absent from lineage: {missing[:5]}"
+def _check_downstream_impact(pipeline_cards: list[CardBlock]) -> tuple[bool, str]:
+    bad: list[str] = []
+    n = 0
+    for b in pipeline_cards:
+        if b.kind.startswith("Dataflow"):
+            n += 1
+            if "### Downstream impact" not in b.text:
+                bad.append(b.title)
+    if bad:
+        return False, f"{len(bad)} dataflow card(s) missing a downstream-impact section — sample: {bad[:5]}"
+    return True, f"All {n} dataflow cards carry a downstream-impact section."
 
 
-def _check_secrets(files: list[Path]) -> tuple[bool, str]:
+def _check_acronyms(cfg: configmod.Config, blob_overview: str) -> tuple[bool, str]:
+    if not cfg.acronyms:
+        return True, "No acronyms configured — gate skipped."
+    if "### Acronyms" not in blob_overview:
+        return False, "Overview is missing the acronyms section."
+    missing = [k for k in sorted(cfg.acronyms) if f"`{k}`" not in blob_overview]
+    if missing:
+        return False, f"{len(missing)} configured acronym(s) absent from overview — sample: {missing[:5]}"
+    return True, f"All {len(cfg.acronyms)} configured acronyms appear in the overview."
+
+
+def _check_secrets(blobs: dict[str, str]) -> tuple[bool, str]:
     hits: list[str] = []
-    for p in files:
-        text = p.read_text(encoding="utf-8")
+    for name in sorted(blobs):
+        text = blobs[name]
         for pat in SECRET_PATTERNS:
             for m in pat.finditer(text):
-                hits.append(f"{p.relative_to(md.REPO_ROOT)}: {m.group(0)[:60]}")
-    if not hits:
-        return True, "No secret patterns found in any documentation file."
-    return False, f"Possible secrets: {hits[:5]}"
+                hits.append(f"{name}: {m.group(0)[:50]}")
+        for m in EMAIL_RE.finditer(text):
+            hits.append(f"{name}: email {m.group(0)}")
+        for m in TEAMS_THREAD_RE.finditer(text):
+            hits.append(f"{name}: teams-thread {m.group(0)[:30]}")
+    if hits:
+        return False, f"{len(hits)} possible leak(s) — sample: {hits[:5]}"
+    return True, "No secrets, recipient emails, or Teams thread IDs found."
 
 
-def _check_audience_lines(files: list[Path]) -> tuple[bool, str]:
-    missing: list[str] = []
-    excluded = {"CHANGELOG.md", "ReleaseNotes.md", "dataflow-references.md", "generation-log.md"}
-    for p in files:
-        if p.name in excluded:
-            continue
-        text = p.read_text(encoding="utf-8")
-        if "**Audience:**" not in text:
-            missing.append(str(p.relative_to(md.REPO_ROOT)))
-    if not missing:
-        return True, "Every relevant doc carries an Audience line."
-    return False, f"Missing audience lines: {missing[:5]}"
-
-
-def _check_internal_links(files: list[Path]) -> tuple[bool, str]:
-    bad: list[str] = []
-    link_re = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
-    for p in files:
-        text = p.read_text(encoding="utf-8")
-        for m in link_re.finditer(text):
-            target = m.group(1)
-            if target.startswith(("http://", "https://", "mailto:", "#")):
-                continue
-            # Trim anchor
-            base = target.split("#", 1)[0]
-            if not base:
-                continue
-            decoded = base.replace("%20", " ")
-            target_path = (p.parent / decoded).resolve()
-            if not target_path.exists():
-                bad.append(f"{p.relative_to(md.REPO_ROOT)} -> {target}")
-    if not bad:
-        return True, "All internal links resolve."
-    return False, f"{len(bad)} broken link(s) — sample: {bad[:5]}"
-
-
-def _check_changelog(docs: Path) -> tuple[bool, str]:
-    cl = docs / "CHANGELOG.md"
-    if not cl.exists():
-        return False, "CHANGELOG.md missing"
-    txt = cl.read_text(encoding="utf-8")
-    if re.search(r"##\s*\[\d{4}-\d{2}-\d{2}\]", txt):
-        return True, "CHANGELOG.md has at least one dated entry."
-    return False, "CHANGELOG.md has no dated entry."
-
-
-def _check_release_notes(docs: Path) -> tuple[bool, str]:
-    rn = docs / "ReleaseNotes.md"
-    if not rn.exists():
-        return False, "ReleaseNotes.md missing"
-    return True, "ReleaseNotes.md template present."
-
-
-def _check_orchestration_coverage(
-    flows: list, docs: Path
-) -> tuple[bool, str]:
-    """Every orchestration flow must have a corresponding doc file."""
-    folder = docs / "orchestration"
-    if not flows:
-        return True, "No orchestration flows configured."
-    if not folder.exists():
-        return False, "model-docs/orchestration/ does not exist."
-    expected = {md.safe_filename(f.name) + ".md" for f in flows}
-    actual = {p.name for p in folder.glob("*.md")}
-    missing = sorted(expected - actual)
-    if missing:
-        return False, f"Missing orchestration docs: {missing}"
-    return True, f"All {len(flows)} orchestration flow(s) have a doc file."
-
-
-def _check_orchestration_id_resolution(
-    flows: list, lin: lineagemod.Lineage, cfg: configmod.Config
-) -> tuple[bool, str]:
-    """Every dataflow / dataset / workspace ID referenced by an orchestration
-    flow should resolve against the model + dataflows + configured workspaces.
-    """
-    known_workspaces = {
-        w.lower()
-        for w in (
-            [cfg.workspaces.primary, cfg.workspaces.dataset]
-            + list(cfg.workspaces.secondary)
-        )
-        if w
-    }
-    known_dataflows = {ref.dataflow_id for ref in lin.dataflow_refs.values()} | set(
-        lin.short_id_to_name.keys()
-    )
-    unresolved: list[str] = []
-    for f in flows:
-        for ws in f.workspace_ids:
-            if known_workspaces and ws.lower() not in known_workspaces:
-                unresolved.append(
-                    f"{f.name}: workspace `{ws}` not declared in [workspaces]"
-                )
-        for t in f.refresh_targets:
-            if t.kind == "dataflow":
-                # match either full ID or 8-char prefix
-                if t.object_id and not any(
-                    t.object_id == k or k.startswith(t.object_id[:8])
-                    for k in known_dataflows
-                ):
-                    unresolved.append(
-                        f"{f.name}: dataflow `{t.object_id}` not in repo (action `{t.action_name}`)"
-                    )
-    if unresolved:
-        return False, f"{len(unresolved)} unresolved ID(s) — sample: {unresolved[:3]}"
-    return True, "All orchestration IDs resolve against the repo + config."
-
-
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     cfg = configmod.load()
-    print("[validate] loading sources for quality gate checks…")
-    semantic_def = _resolve_semantic_model(cfg)
-    report_defs = _resolve_report_definitions(cfg)
-    model = tmdl.load_model(semantic_def)
-    reports = [pbirmod.load_report(rd) for rd in report_defs]
-    primary_report = reports[0]
+    print("[validate] loading sources for quality-gate checks…")
+    model = tmdl.load_model(_resolve_semantic_model(cfg))
+    reports = [pbirmod.load_report(rd) for rd in _resolve_report_definitions(cfg)]
     dataflows_glob = cfg.paths.dataflow_exports
     dataflows_dir = (
         (md.REPO_ROOT / dataflows_glob).parent
@@ -233,54 +231,47 @@ def main(argv: list[str] | None = None) -> int:
     dataflows = dfmod.load_dataflows(dataflows_dir)
     flows = orcmod.load_flows(cfg.resolve_many(cfg.paths.orchestration_definitions))
     lin = lineagemod.build(
-        model,
-        primary_report,
-        dataflows,
-        reports=reports,
-        orchestration_flows=flows,
+        model, reports[0], dataflows, reports=reports, orchestration_flows=flows
     )
-    if cfg.workspaces.primary:
-        lin.primary_workspace_id = cfg.workspaces.primary
-    files = _gather_md_files(DOCS)
-    print(f"[validate] {len(files)} markdown files under {DOCS}")
+    cls = dax_refs.classify_measures(
+        model,
+        visual_usage=_visual_usage(reports),
+        selector_prefixes=tuple(cfg.measures.selector_prefixes),
+        base_prefixes=tuple(cfg.measures.base_prefixes),
+    )
+
+    files_ok, files_msg = _check_files_present(DOCS)
+    blobs: dict[str, str] = {}
+    for f in KB_FILES:
+        p = DOCS / f
+        blobs[f] = p.read_text(encoding="utf-8") if p.exists() else ""
+
+    all_anchors: set[str] = set()
+    for text in blobs.values():
+        all_anchors |= set(_ANCHOR_RE.findall(text))
+    metric_cards = _split_cards(blobs["01-model-and-metrics.md"])
+    pipeline_cards = _split_cards(blobs["02-data-pipeline.md"])
 
     gates: list[tuple[str, bool, str]] = []
-    gates.append(("100% measure coverage", *_check_measure_coverage(model, files)))
-    gates.append(("No unresolved unknowns", *_check_unresolved_unknowns(files)))
-    gates.append(("Name consistency (tables)", *_check_name_consistency(model, files)))
+    gates.append(("Knowledge-base files present", files_ok, files_msg))
+    gates.append(("Card anchors unique", *_check_anchor_uniqueness(blobs)))
+    gates.append(("Cross-reference integrity", *_check_link_integrity(blobs)))
     gates.append(
-        ("Lineage completeness", *_check_lineage_completeness(model, DOCS / "lineage" / "lineage.md"))
+        ("Measure coverage", *_check_measure_coverage(cls, all_anchors, blobs["01-model-and-metrics.md"]))
     )
-    gates.append(("No sensitive data", *_check_secrets(files)))
-    gates.append(("Audience labels present", *_check_audience_lines(files)))
-    gates.append(("Cross-reference integrity", *_check_internal_links(files)))
-    gates.append(("Change log initialised", *_check_changelog(DOCS)))
-    gates.append(("Release notes template ready", *_check_release_notes(DOCS)))
-    gates.append(("Orchestration coverage", *_check_orchestration_coverage(flows, DOCS)))
-    gates.append(
-        ("Orchestration ID resolution", *_check_orchestration_id_resolution(flows, lin, cfg))
-    )
+    gates.append(("Concept routing tables", *_check_concept_routing(metric_cards)))
+    gates.append(("Metric source-trace sections", *_check_source_trace(metric_cards)))
+    gates.append(("Dataflow downstream impact", *_check_downstream_impact(pipeline_cards)))
+    gates.append(("Acronyms documented", *_check_acronyms(cfg, blobs["00-overview.md"])))
+    gates.append(("No sensitive data", *_check_secrets(blobs)))
 
     overall = all(ok for _name, ok, _msg in gates)
     rows = ["| Gate | Status | Detail |", "| --- | --- | --- |"]
     for name, ok, msg in gates:
-        icon = "✅ pass" if ok else "❌ fail"
+        icon = "PASS" if ok else "FAIL"
         rows.append(f"| {name} | {icon} | {md.md_escape_pipe(msg)} |")
-    summary = f"_Last validated: {md.TODAY} — overall: " + ("**PASS**" if overall else "**FAIL**") + "_\n\n" + "\n".join(rows)
-
-    # Inject into README
-    readme = DOCS / "README.md"
-    if readme.exists():
-        text = readme.read_text(encoding="utf-8")
-        text = re.sub(
-            r"<!-- VALIDATION:START -->.*?<!-- VALIDATION:END -->",
-            "<!-- VALIDATION:START -->\n" + summary + "\n<!-- VALIDATION:END -->",
-            text,
-            flags=re.DOTALL,
-        )
-        readme.write_text(text, encoding="utf-8")
-
-    print(summary)
+    print(f"\n_Validated: {md.TODAY} — overall: " + ("PASS" if overall else "FAIL") + "_\n")
+    print("\n".join(rows))
     print()
     if overall:
         print("[validate] PASS — all quality gates met.")

@@ -10,22 +10,25 @@ narratives, data-source descriptions, acronyms) is loaded from
 """
 from __future__ import annotations
 
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from . import config as configmod
 from . import dataflow as dfmod
+from . import dax_refs
 from . import lineage as lineagemod
 from . import md
 from . import orchestration as orcmod
 from . import pbir as pbirmod
+from . import sourcetrace
+from . import sqlsource
 from . import tmdl
-from . import renderers_extras as rx
-from . import renderers_model as rm
-from . import renderers_orchestration as ro_orc
+from . import cards
+from . import renderers_model_metrics as rmm
 from . import renderers_overview as ro
+from . import renderers_pipeline as rp
+from . import renderers_reports as rr
 
 REPO_ROOT = md.REPO_ROOT
 DOCS = md.DOCS
@@ -123,6 +126,18 @@ def _resolve_report_definitions(cfg: configmod.Config) -> list[Path]:
     return [p for p in included if p.resolve() not in excluded]
 
 
+def _visual_usage(reports: list) -> dict[str, int]:
+    """Count how many visuals reference each measure (by member name)."""
+    usage: dict[str, int] = {}
+    for rep in reports:
+        for page in rep.pages:
+            for visual in page.visuals:
+                for fr in visual.fields:
+                    if fr.kind == "Measure" and fr.member:
+                        usage[fr.member] = usage.get(fr.member, 0) + 1
+    return usage
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = argv or sys.argv[1:]
     cfg = configmod.load()
@@ -195,6 +210,42 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(lin.short_id_to_name)} dataflow name resolutions"
     )
 
+    # ---- Measure classification (selector/router/metric/compute/base) ----
+    print("[docgen] classifying measures")
+    cls = dax_refs.classify_measures(
+        model,
+        visual_usage=_visual_usage(reports),
+        selector_prefixes=tuple(cfg.measures.selector_prefixes),
+        base_prefixes=tuple(cfg.measures.base_prefixes),
+    )
+    counts = cls.counts()
+    print(
+        "[docgen]   "
+        + " · ".join(f"{role}: {counts.get(role, 0)}" for role in sorted(counts))
+    )
+
+    # ---- SQL source catalog + two-hop source trace ----
+    print("[docgen] loading SQL export catalog")
+    sql_catalog = sqlsource.load_sql_catalog(
+        cfg.resolve(cfg.paths.sql_exports), repo_root=REPO_ROOT
+    )
+    print(f"[docgen]   {len(sql_catalog.views_by_entity)} SQL view(s)")
+    print("[docgen] building two-hop source trace")
+    trace = sourcetrace.build_source_trace(model, cls, sql_catalog, lin)
+
+    # ---- Card context (shared by all four renderers) ----
+    ctx = cards.build_context(
+        cfg=cfg,
+        model=model,
+        reports=reports,
+        dataflows=dataflows,
+        flows=flows,
+        lin=lin,
+        cls=cls,
+        trace=trace,
+        sql_catalog=sql_catalog,
+    )
+
     # ---- Write phase (skip files whose content is unchanged) ----
     generated: set[Path] = set()
     changed: list[Path] = []
@@ -204,55 +255,11 @@ def main(argv: list[str] | None = None) -> int:
         if md.write(path, content):
             changed.append(path)
 
-    # ---- Phase 1 — inventory ----
-    readme_content = ro.render_readme(lin, cfg)
-    readme_path = DOCS / "README.md"
-    # Preserve any VALIDATION block previously injected by `validate.py` so
-    # successive generate / validate runs do not ping-pong the same file.
-    if readme_path.exists():
-        existing = readme_path.read_text(encoding="utf-8")
-        m = re.search(
-            r"<!-- VALIDATION:START -->.*?<!-- VALIDATION:END -->",
-            existing,
-            flags=re.DOTALL,
-        )
-        if m:
-            readme_content = re.sub(
-                r"<!-- VALIDATION:START -->.*?<!-- VALIDATION:END -->",
-                m.group(0),
-                readme_content,
-                flags=re.DOTALL,
-            )
-    emit(readme_path, readme_content)
-    emit(DOCS / "architecture" / "overview.md", ro.render_architecture(lin, cfg))
-    emit(DOCS / "lineage" / "lineage.md", ro.render_lineage(lin, cfg))
-    emit(DOCS / "CHANGELOG.md", ro.render_changelog(cfg))
-
-    # ---- Phase 2 — model + measures + glossary ----
-    model_filename = md.safe_filename(model.name) + ".md"
-    emit(DOCS / "model" / model_filename, rm.render_model(lin))
-    measures_files = rm.render_measures(lin)
-    for fname, content in measures_files.items():
-        emit(DOCS / "measures" / fname, content)
-    emit(DOCS / "glossary.md", rx.render_glossary(lin, cfg))
-
-    # ---- Phase 3 — sources, dataflows, orchestration ----
-    for fname, content in rx.render_data_sources(lin, cfg).items():
-        emit(DOCS / "data-sources" / fname, content)
-    for fname, content in rx.render_dataflows(lin).items():
-        emit(DOCS / "dataflows" / fname, content)
-    for fname, content in ro_orc.render_orchestration(lin, cfg).items():
-        emit(DOCS / "orchestration" / fname, content)
-
-    # ---- Phase 4 — reports & app ----
-    for fname, content in rx.render_reports(lin).items():
-        emit(DOCS / "reports" / fname, content)
-    for fname, content in rx.render_app(lin, cfg).items():
-        emit(DOCS / "app" / fname, content)
-
-    # ---- Phase 5 — runbook + release notes ----
-    emit(DOCS / "ops" / "runbook.md", rx.render_runbook(lin, cfg))
-    emit(DOCS / "ReleaseNotes.md", rx.render_release_notes())
+    # ---- Four flat card bundles (agent knowledge base) ----
+    emit(DOCS / "00-overview.md", ro.render_overview(ctx))
+    emit(DOCS / "01-model-and-metrics.md", rmm.render_model_and_metrics(ctx))
+    emit(DOCS / "02-data-pipeline.md", rp.render_data_pipeline(ctx))
+    emit(DOCS / "03-reports.md", rr.render_reports(ctx))
 
     # ---- Sweep orphans (files that existed but were not produced this run) ----
     removed = _sweep_orphans(DOCS, generated)

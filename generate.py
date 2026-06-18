@@ -32,6 +32,10 @@ from . import renderers_reports as rr
 
 REPO_ROOT = md.REPO_ROOT
 DOCS = md.DOCS
+# Plain-text mirror of the agent knowledge base, for agents that cannot ingest
+# Markdown. Kept wholly separate from model-docs/ so it never participates in
+# the docgen validation gates.
+DOCS_TXT = REPO_ROOT / "model-docs-txt"
 
 GENERATION_LOG = "generation-log.md"
 
@@ -256,15 +260,31 @@ def main(argv: list[str] | None = None) -> int:
             changed.append(path)
 
     # ---- Four flat card bundles (agent knowledge base) ----
-    emit(DOCS / "00-overview.md", ro.render_overview(ctx))
-    for filename, text in rmm.render_model_and_metrics(ctx):
+    kb_outputs: list[tuple[str, str]] = [("00-overview.md", ro.render_overview(ctx))]
+    kb_outputs.extend(rmm.render_model_and_metrics(ctx))
+    kb_outputs.append(("02-data-pipeline.md", rp.render_data_pipeline(ctx)))
+    kb_outputs.append(("03-reports.md", rr.render_reports(ctx)))
+    for filename, text in kb_outputs:
         emit(DOCS / filename, text)
-    emit(DOCS / "02-data-pipeline.md", rp.render_data_pipeline(ctx))
-    emit(DOCS / "03-reports.md", rr.render_reports(ctx))
+
+    # ---- Plain-text mirror (for agents that reject Markdown uploads) ----
+    # Each KB file is saved verbatim as a .txt under model-docs-txt/, a simple
+    # "save as" with identical content. This folder is independent of the
+    # validation gates that run over model-docs/.
+    txt_generated: set[Path] = set()
+
+    def emit_txt(path: Path, content: str) -> None:
+        txt_generated.add(path.resolve())
+        if md.write(path, content):
+            changed.append(path)
+
+    for filename, text in kb_outputs:
+        emit_txt(DOCS_TXT / (Path(filename).stem + ".txt"), text)
 
     # ---- Sweep orphans (files that existed but were not produced this run) ----
     removed = _sweep_orphans(DOCS, generated)
-    unchanged = len(generated) - len(changed)
+    removed += _sweep_orphans(DOCS_TXT, txt_generated)
+    unchanged = len(generated) + len(txt_generated) - len(changed)
 
     # ---- Append generation log (protected from sweep) ----
     _append_generation_log(DOCS / GENERATION_LOG, changed, removed, unchanged)

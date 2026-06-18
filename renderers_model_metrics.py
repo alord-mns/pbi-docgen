@@ -210,6 +210,14 @@ def render_measure_card(ctx: DocContext, mc: dax_refs.MeasureClass) -> cards.Car
         home += f" · **Format:** `{measure.format_string}`"
     parts.append(home)
 
+    # Front-load a one-line DAX into the header block. When the indexer splits
+    # this card, the header chunk (the one reliably retrieved by the measure
+    # name) then already carries the definition, so the most common question is
+    # answerable even if the full `### Definition (DAX)` section lands in another
+    # chunk.
+    parts.append("")
+    parts.append(f"**Definition (one-line):** {cards.measure_dax_oneline(ctx, name, cap=240)}")
+
     if measure and measure.description.strip():
         parts.append("")
         parts.append(f"> {md.md_escape_pipe(measure.description.strip())}")

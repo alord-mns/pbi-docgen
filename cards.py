@@ -67,6 +67,30 @@ def card_anchor(kind: str, name: str) -> str:
     return f"{slug}-{digest}" if slug else f"{kind}-{digest}"
 
 
+def _stamp_section_headings(body: str, title: str) -> str:
+    """Append the card title to every H3 (``### ``) section heading.
+
+    The M365 indexer splits a large card across chunks. A sub-section chunk that
+    does not name its card (e.g. a bare ``### Definition (DAX)`` followed only by
+    a code block) is not retrievable by the card's name, so the agent finds the
+    header chunk but not the definition chunk. Stamping the title onto each
+    ``### `` heading makes every chunk self-identifying. The heading's leading
+    text is unchanged, so heading-substring validators still match. Lines inside
+    fenced code blocks are left untouched.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in body.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+        elif not in_fence and line.startswith("### "):
+            out.append(f"{line.rstrip()} \u00b7 {title}")
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def render_card(card: Card) -> str:
     """Render one card to Markdown (anchor + heading + body)."""
     lines = [f'<a id="{card.anchor}"></a>', "", f"## {card.title}", ""]
@@ -78,7 +102,7 @@ def render_card(card: Card) -> str:
         lines.append("")
         lines.append("**Also known as:** " + ", ".join(card.keywords))
     lines.append("")
-    body = (card.body or "").strip("\n")
+    body = _stamp_section_headings((card.body or "").strip("\n"), card.title)
     if body:
         lines.append(body)
         lines.append("")

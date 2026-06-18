@@ -241,15 +241,26 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     files_ok, files_msg = _check_files_present(DOCS)
+
+    # Discover the full knowledge base, including any size-split 01 parts.
+    kb_files = list(KB_FILES)
+    for p in sorted(DOCS.glob("01-model-and-metrics-*.md")):
+        if p.name not in kb_files:
+            kb_files.append(p.name)
     blobs: dict[str, str] = {}
-    for f in KB_FILES:
+    for f in kb_files:
         p = DOCS / f
         blobs[f] = p.read_text(encoding="utf-8") if p.exists() else ""
 
     all_anchors: set[str] = set()
     for text in blobs.values():
         all_anchors |= set(_ANCHOR_RE.findall(text))
-    metric_cards = _split_cards(blobs["01-model-and-metrics.md"])
+
+    # The model-and-metrics bundle may span several files; treat them as one.
+    model_metric_blob = "\n".join(
+        blobs[f] for f in kb_files if f.startswith("01-model-and-metrics")
+    )
+    metric_cards = _split_cards(model_metric_blob)
     pipeline_cards = _split_cards(blobs["02-data-pipeline.md"])
 
     gates: list[tuple[str, bool, str]] = []
@@ -257,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
     gates.append(("Card anchors unique", *_check_anchor_uniqueness(blobs)))
     gates.append(("Cross-reference integrity", *_check_link_integrity(blobs)))
     gates.append(
-        ("Measure coverage", *_check_measure_coverage(cls, all_anchors, blobs["01-model-and-metrics.md"]))
+        ("Measure coverage", *_check_measure_coverage(cls, all_anchors, model_metric_blob))
     )
     gates.append(("Concept routing tables", *_check_concept_routing(metric_cards)))
     gates.append(("Metric source-trace sections", *_check_source_trace(metric_cards)))

@@ -115,6 +115,31 @@ def render_bundle(
     return "\n".join(parts).rstrip() + "\n"
 
 
+def split_cards_by_size(cards: list[Card], budget: int) -> list[list[Card]]:
+    """Partition cards into groups whose rendered size stays under ``budget``.
+
+    A large flat file chunks poorly for single-chunk RAG retrieval. Splitting on
+    whole-card boundaries keeps every card intact while bounding file size. A
+    single card larger than the budget occupies its own group. Order is
+    preserved, so the partition is deterministic and idempotent.
+    """
+    groups: list[list[Card]] = []
+    current: list[Card] = []
+    size = 0
+    sep = len("---\n\n")
+    for card in cards:
+        clen = len(render_card(card)) + sep
+        if current and size + clen > budget:
+            groups.append(current)
+            current = []
+            size = 0
+        current.append(card)
+        size += clen
+    if current:
+        groups.append(current)
+    return groups or [[]]
+
+
 # ---------------------------------------------------------------------------
 # Document context
 # ---------------------------------------------------------------------------
@@ -133,6 +158,7 @@ class DocContext:
     measure_pages: dict[str, set[str]] = field(default_factory=dict)
     selected_by: dict[str, list[str]] = field(default_factory=dict)
     concept_of: dict[str, str] = field(default_factory=dict)
+    selector_value_of: dict[str, list[str]] = field(default_factory=dict)
     table_measures: dict[str, set[str]] = field(default_factory=dict)
     measure_by_name: dict[str, tmdl.Measure] = field(default_factory=dict)
     table_by_name: dict[str, tmdl.Table] = field(default_factory=dict)
@@ -180,14 +206,29 @@ def build_context(
     # router branch target -> routers that select it (the "Selected by" link).
     selected_by: dict[str, list[str]] = {}
     concept_of: dict[str, str] = {}
+    selector_value_of: dict[str, list[str]] = {}
     for router in sorted(cls.of_role(dax_refs.ROLE_ROUTER), key=lambda m: m.name):
         for target in router.branch_targets:
             selected_by.setdefault(target, [])
             if router.name not in selected_by[target]:
                 selected_by[target].append(router.name)
             concept_of.setdefault(target, router.name)
+        # selector value(s) that route to each target (for lead-sentence detail).
+        driver = router.drivers[0] if router.drivers else ""
+        switch = router.switch
+        branches = switch.branches if switch and switch.is_switch else []
+        for branch in branches:
+            target = branch.target_measure
+            label = (branch.label or "").strip()
+            if not target or not label or label == "(default)":
+                continue
+            clause = f"`{driver}` = {label}" if driver else label
+            lst = selector_value_of.setdefault(target, [])
+            if clause not in lst:
+                lst.append(clause)
     ctx.selected_by = selected_by
     ctx.concept_of = concept_of
+    ctx.selector_value_of = selector_value_of
 
     # table -> measures that (transitively) reference its columns.
     table_measures: dict[str, set[str]] = {}
@@ -205,6 +246,16 @@ def build_context(
 # Shared formatting helpers
 # ---------------------------------------------------------------------------
 _WS_RE = re.compile(r"\s+")
+
+# A SQL expression is a "real" derivation worth printing if it contains a
+# function call, an operator, or a CASE/WHEN — otherwise it is a bare (possibly
+# table-qualified) column reference that adds nothing beyond the column name.
+_REAL_EXPR_RE = re.compile(r"[()+\-*/]|\bcase\b|\bwhen\b", re.IGNORECASE)
+
+
+def _is_passthrough_expr(expr: str) -> bool:
+    """True when the SQL expression is a bare column passthrough (no compute)."""
+    return not _REAL_EXPR_RE.search(expr)
 
 
 def collapse_ws(text: str, cap: int = 0) -> str:
@@ -257,27 +308,59 @@ def measure_inline_summary(ctx: DocContext, name: str) -> str:
 
 
 def source_trace_table(ctx: DocContext, name: str) -> str:
-    """Full measure → SQL derivation table (one row per terminal column)."""
+    """Compact measure → SQL source trace (token-efficient arrow encoding).
+
+    Resolved columns render as ``model_col → entity → view:line``, with the SQL
+    expression appended only when it is a real computation (not a trivial
+    passthrough of the column). Unresolved columns are grouped by reason, with
+    same-table columns collapsed to ``table[a, b, c]``. This carries the same
+    facts as a full markdown table with far less scaffolding, which also raises
+    the chunk's signal-to-noise ratio for retrieval.
+    """
     derivs = ctx.trace.derivations(name)
     if not derivs:
         return "_No column references — computed entirely from other measures._"
-    header = (
-        "| Model column | Physical column | Dataflow entity | SQL view : line | Derivation / status |\n"
-        "|---|---|---|---|---|"
+
+    resolved = sorted(
+        (d for d in derivs if d.resolved), key=lambda x: (x.table, x.column)
     )
-    rows: list[str] = []
-    for d in sorted(derivs, key=lambda x: (x.table, x.column)):
-        model_col = f"`{d.table}[{d.column}]`"
-        phys = f"`{d.source_column}`" if d.source_column else "—"
-        entity = f"`{d.dataflow_entity}`" if d.dataflow_entity else "—"
-        if d.resolved:
-            loc = f"`{d.view}` : {d.sql.line}"
-            deriv = "`" + md.md_escape_pipe(collapse_ws(d.sql.expression, 140)) + "`"
-        else:
-            loc = f"`{d.view}`" if d.view else "—"
-            deriv = f"_{md.md_escape_pipe(d.reason)}_"
-        rows.append(f"| {model_col} | {phys} | {entity} | {loc} | {deriv} |")
-    return header + "\n" + "\n".join(rows)
+    unresolved = sorted(
+        (d for d in derivs if not d.resolved), key=lambda x: (x.table, x.column)
+    )
+
+    lines: list[str] = []
+    if resolved:
+        lines.append("**Resolved:**")
+        lines.append("")
+        for d in resolved:
+            entry = f"- `{d.table}[{d.column}]` → "
+            if d.dataflow_entity:
+                entry += f"`{d.dataflow_entity}` → "
+            entry += f"`{d.view}`:{d.sql.line}"
+            if d.source_column and d.source_column != d.column:
+                entry += f" (col `{d.source_column}`)"
+            expr = collapse_ws(d.sql.expression, 140) if d.sql else ""
+            if expr and not _is_passthrough_expr(expr):
+                entry += f" — `{expr}`"
+            lines.append(entry)
+
+    if unresolved:
+        if resolved:
+            lines.append("")
+        lines.append("**Unresolved:**")
+        lines.append("")
+        # Group columns by their (identical) reason, collapsing same-table cols.
+        by_reason: dict[str, dict[str, list[str]]] = {}
+        for d in unresolved:
+            by_reason.setdefault(d.reason, {}).setdefault(d.table, []).append(d.column)
+        for reason in sorted(by_reason):
+            grouped = by_reason[reason]
+            tokens = [
+                f"`{table}[{', '.join(grouped[table])}]`" for table in sorted(grouped)
+            ]
+            lines.append(f"- {', '.join(tokens)} — _{reason}_")
+
+    return "\n".join(lines)
 
 
 def trace_accounting(ctx: DocContext, name: str) -> str:
@@ -337,6 +420,7 @@ __all__ = [
     "card_anchor",
     "render_card",
     "render_bundle",
+    "split_cards_by_size",
     "collapse_ws",
     "measure_dax_oneline",
     "measure_source_summary",

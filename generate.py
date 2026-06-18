@@ -257,7 +257,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- Four flat card bundles (agent knowledge base) ----
     emit(DOCS / "00-overview.md", ro.render_overview(ctx))
-    emit(DOCS / "01-model-and-metrics.md", rmm.render_model_and_metrics(ctx))
+    for filename, text in rmm.render_model_and_metrics(ctx):
+        emit(DOCS / filename, text)
     emit(DOCS / "02-data-pipeline.md", rp.render_data_pipeline(ctx))
     emit(DOCS / "03-reports.md", rr.render_reports(ctx))
 

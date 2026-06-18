@@ -24,12 +24,120 @@ from .cards import DocContext
 
 
 # ---------------------------------------------------------------------------
+# Lead sentences — a mechanical, evidence-derived opening line per card.
+#
+# Retrieval is by single-chunk embedding similarity. A terse card (heading +
+# one DAX line) carries a weak signal and is easily out-ranked by its many
+# near-identical siblings. A natural-language opening sentence that restates
+# the measure's exact name plus its disambiguating context (home table,
+# display-folder breadcrumb, selecting concept + selector value, resolved SQL
+# source) raises that signal. Every clause is derived from repository evidence
+# only — no business meaning is invented.
+# ---------------------------------------------------------------------------
+_METRIC_ROLE_LABEL = {
+    dax_refs.ROLE_METRIC: "metric",
+    dax_refs.ROLE_COMPUTE: "intermediate (compute)",
+}
+
+
+def _folder_breadcrumb(measure) -> str:
+    """Display folder as a ' > '-joined breadcrumb (e.g. Margin > Orders > LW)."""
+    if not measure or not measure.display_folder:
+        return ""
+    parts = [seg.strip() for seg in measure.display_folder.replace("/", "\\").split("\\")]
+    return " > ".join(p for p in parts if p)
+
+
+def _resolved_source_tokens(ctx: DocContext, name: str, cap: int = 4) -> list[str]:
+    """Distinct ``view.column`` tokens that resolved to a physical SQL source."""
+    toks: list[str] = []
+    for d in ctx.trace.derivations(name):
+        if d.resolved:
+            tok = f"`{d.view}.{d.source_column}`"
+            if tok not in toks:
+                toks.append(tok)
+    return toks[:cap]
+
+
+def _measure_lead(ctx: DocContext, mc: dax_refs.MeasureClass, measure) -> str:
+    """Build the opening sentence for a metric / compute measure card."""
+    name = mc.name
+    role_label = _METRIC_ROLE_LABEL.get(mc.role, mc.role)
+    sentence = f"`{name}` is a {role_label} measure on table `{mc.table}`"
+    crumb = _folder_breadcrumb(measure)
+    if crumb:
+        sentence += f", in display folder {crumb}"
+    sentence += "."
+
+    concepts = ctx.selected_by.get(name, [])
+    if concepts:
+        concept_phrase = " and ".join(f"`{c}`" for c in concepts)
+        clauses = ctx.selector_value_of.get(name, [])
+        if clauses:
+            sentence += (
+                f" It is the variant selected by the {concept_phrase} metric"
+                f" when {' or '.join(clauses)}."
+            )
+        else:
+            sentence += f" It is selected by the {concept_phrase} metric."
+
+    toks = _resolved_source_tokens(ctx, name)
+    if toks:
+        sentence += f" Its value derives from {', '.join(toks)}."
+    return sentence
+
+
+def _concept_lead(ctx: DocContext, router: dax_refs.MeasureClass) -> str:
+    """Build the opening sentence for a metric concept (router) card."""
+    name = router.name
+    drivers = " and ".join(f"`{d}`" for d in router.drivers) or "a selector"
+    sentence = (
+        f"`{name}` is a metric concept on table `{router.table}` that resolves to "
+        f"one of several underlying measures based on the {drivers} selector."
+    )
+    switch = router.switch
+    branches = switch.branches if switch and switch.is_switch else []
+    pairs: list[str] = []
+    for branch in branches:
+        target = branch.target_measure
+        label = (branch.label or "").strip()
+        if target and label:
+            pairs.append(f"{label} -> `{target}`")
+        elif target:
+            pairs.append(f"default -> `{target}`")
+    if pairs:
+        sentence += " It routes: " + "; ".join(pairs) + "."
+    return sentence
+
+
+def _table_lead(ctx: DocContext, table, views: list[str], entities: list[str]) -> str:
+    """Build the opening sentence for a table / entity card."""
+    flags = []
+    if table.is_calculation_group:
+        flags.append("calculation-group")
+    elif table.is_calculated:
+        flags.append("calculated")
+    kind = (" ".join(flags) + " table") if flags else "table"
+    sentence = (
+        f"`{table.name}` is a {kind} in the semantic model with "
+        f"{len(table.columns)} column(s) and {len(table.measures)} measure(s)."
+    )
+    if views:
+        sentence += " It is sourced from Databricks view(s) " + ", ".join(f"`{v}`" for v in views) + "."
+    elif entities:
+        sentence += " It is fed by dataflow entity(ies) " + ", ".join(f"`{e}`" for e in entities) + "."
+    return sentence
+
+
+# ---------------------------------------------------------------------------
 # Metric concept card (router family)
 # ---------------------------------------------------------------------------
 def render_concept_card(ctx: DocContext, router: dax_refs.MeasureClass) -> cards.Card:
     name = router.name
     parts: list[str] = []
 
+    parts.append(_concept_lead(ctx, router))
+    parts.append("")
     drivers = ", ".join(f"`{d}`" for d in router.drivers) or "_(none detected)_"
     parts.append(f"**Selector driver(s):** {drivers}")
     parts.append("")
@@ -93,6 +201,8 @@ def render_measure_card(ctx: DocContext, mc: dax_refs.MeasureClass) -> cards.Car
     measure = ctx.measure_by_name.get(name)
     parts: list[str] = []
 
+    parts.append(_measure_lead(ctx, mc, measure))
+    parts.append("")
     home = f"**Home table:** `{mc.table}`"
     if measure and measure.display_folder:
         home += f" · **Display folder:** {measure.display_folder}"
@@ -151,6 +261,8 @@ def render_measure_card(ctx: DocContext, mc: dax_refs.MeasureClass) -> cards.Car
 def render_compute_stub(ctx: DocContext, mc: dax_refs.MeasureClass) -> cards.Card:
     name = mc.name
     parts: list[str] = []
+    parts.append(_measure_lead(ctx, mc, ctx.measure_by_name.get(name)))
+    parts.append("")
     parts.append(f"**Home table:** `{mc.table}` · intermediate (compute) measure.")
 
     concept = ctx.concept_of.get(name)
@@ -190,6 +302,12 @@ def render_table_card(ctx: DocContext, table) -> cards.Card:
     name = table.name
     parts: list[str] = []
 
+    entities = ctx.trace.table_to_dataflow_entities.get(name, [])
+    views = ctx.trace.table_to_views.get(name, [])
+
+    parts.append(_table_lead(ctx, table, views, entities))
+    parts.append("")
+
     desc = table.description.strip() if table.description else ""
     if desc:
         parts.append(f"> {md.md_escape_pipe(desc)}")
@@ -208,8 +326,6 @@ def render_table_card(ctx: DocContext, table) -> cards.Card:
     parts.append(meta)
 
     # Upstream source.
-    entities = ctx.trace.table_to_dataflow_entities.get(name, [])
-    views = ctx.trace.table_to_views.get(name, [])
     parts.append("")
     parts.append("### Upstream source")
     parts.append("")
@@ -289,7 +405,27 @@ def render_table_card(ctx: DocContext, table) -> cards.Card:
 # ---------------------------------------------------------------------------
 # Bundle
 # ---------------------------------------------------------------------------
-def render_model_and_metrics(ctx: DocContext) -> str:
+# Cards are split across files when the rendered size exceeds this budget, so a
+# single-chunk RAG indexer never has to ingest one multi-megabyte file. Part 1
+# keeps the canonical name ``01-model-and-metrics.md``; overflow parts are
+# suffixed ``-02``, ``-03``, …  Cross-references resolve across all parts.
+MODEL_METRICS_PART_BUDGET = 450_000
+
+_PURPOSE = (
+    "Self-sufficient cards for every metric family, measure, and table "
+    "in the semantic model — each carrying its full upstream source "
+    "trace (DAX → columns → dataflow entity → Databricks view) and "
+    "downstream report impact."
+)
+_AUDIENCES = ("Business analysts", "Report developers", "Data engineers")
+
+
+def render_model_and_metrics(ctx: DocContext) -> list[tuple[str, str]]:
+    """Render the model-and-metrics knowledge base, split into size-bounded parts.
+
+    Returns a list of ``(filename, markdown)`` pairs. The first part always uses
+    the canonical filename so existing references stay valid.
+    """
     cls = ctx.cls
     counts = cls.counts()
 
@@ -322,18 +458,34 @@ def render_model_and_metrics(ctx: DocContext) -> str:
         "router that uses them."
     )
 
-    return cards.render_bundle(
-        file_title="Model & Metrics",
-        purpose=(
-            "Self-sufficient cards for every metric family, measure, and table "
-            "in the semantic model — each carrying its full upstream source "
-            "trace (DAX → columns → dataflow entity → Databricks view) and "
-            "downstream report impact."
-        ),
-        audiences=("Business analysts", "Report developers", "Data engineers"),
-        intro=intro,
-        cards=cardlist,
-    )
+    groups = cards.split_cards_by_size(cardlist, MODEL_METRICS_PART_BUDGET)
+    total = len(groups)
+    outputs: list[tuple[str, str]] = []
+    for idx, group in enumerate(groups, start=1):
+        filename = (
+            "01-model-and-metrics.md"
+            if idx == 1
+            else f"01-model-and-metrics-{idx:02d}.md"
+        )
+        title = "Model & Metrics" if total == 1 else f"Model & Metrics (part {idx} of {total})"
+        intro_bits: list[str] = []
+        if total > 1:
+            intro_bits.append(
+                f"_Part {idx} of {total}. Cards are split across these files purely "
+                "by size; every card is self-sufficient and cross-references "
+                "resolve across all parts._"
+            )
+        if idx == 1:
+            intro_bits.append(intro)
+        text = cards.render_bundle(
+            file_title=title,
+            purpose=_PURPOSE,
+            audiences=_AUDIENCES,
+            intro="\n\n".join(intro_bits),
+            cards=group,
+        )
+        outputs.append((filename, text))
+    return outputs
 
 
 __all__ = [

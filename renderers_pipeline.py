@@ -87,6 +87,53 @@ def render_source_cards(ctx: DocContext) -> list[cards.Card]:
 # ---------------------------------------------------------------------------
 # Dataflow card
 # ---------------------------------------------------------------------------
+def _render_row_filters(ctx: DocContext, entities: set[str]) -> list[str]:
+    """Render the ``Row filters / exclusions`` section for a dataflow's views.
+
+    Lists each backing SQL view's outer ``WHERE`` / ``HAVING`` predicates,
+    grouped into **static exclusions** (fixed) and **dynamic windows** (date
+    dependent), each cited as ``view``:line. Returns an empty list when none of
+    the dataflow's views carry a filter, so the section is omitted entirely.
+    """
+    view_names: list[str] = []
+    for e in sorted(entities):
+        for v in ctx.trace.dataflow_entity_to_views.get(e, []):
+            if v not in view_names:
+                view_names.append(v)
+
+    blocks: list[str] = []
+    for vname in view_names:
+        view = ctx.sql_catalog.view(vname)
+        if view is None or not view.filters:
+            continue
+        static = [f for f in view.filters if not f.dynamic]
+        dynamic = [f for f in view.filters if f.dynamic]
+        src = view.source_file or f"sql/{vname}.sql"
+        lines = [f"**`{md.md_escape_pipe(vname)}`** (`{src}`)", ""]
+        for label, flts in (("Static exclusions", static), ("Dynamic window", dynamic)):
+            if not flts:
+                continue
+            lines.append(f"- {label}:")
+            for flt in flts:
+                tag = " _(HAVING)_" if flt.kind == "having" else ""
+                lines.append(f"  - `{flt.text}` — `{vname}`:{flt.line}{tag}")
+        blocks.append("\n".join(lines))
+
+    if not blocks:
+        return []
+    out = [
+        "",
+        "### Row filters / exclusions",
+        "",
+        "Conditions in the backing SQL views' `WHERE` / `HAVING` clauses that "
+        "restrict which rows reach the model. **Static exclusions** are fixed "
+        "predicates; **dynamic windows** depend on the refresh date.",
+        "",
+    ]
+    out.append("\n\n".join(blocks))
+    return out
+
+
 def render_dataflow_card(ctx: DocContext, d) -> cards.Card:
     entities = {e.name for e in d.entities}
 
@@ -129,6 +176,8 @@ def render_dataflow_card(ctx: DocContext, d) -> cards.Card:
         ev = ctx.trace.dataflow_entity_to_views.get(e.name, [])
         ev_txt = ", ".join(f"`{v}`" for v in ev) or "—"
         parts.append(f"| `{md.md_escape_pipe(e.name)}` | {len(e.attributes)} | {ev_txt} |")
+
+    parts.extend(_render_row_filters(ctx, entities))
 
     parts.append("")
     parts.append("### Downstream impact")

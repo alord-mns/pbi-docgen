@@ -43,6 +43,15 @@ class SqlColumn:
     truncated: bool = False
 
 
+@dataclass(frozen=True)
+class SqlFilter:
+    text: str  # single (capped) predicate, e.g. "stk.siteID = 20145"
+    line: int  # 1-based source line of the clause keyword
+    kind: str  # "where" | "join" | "having"
+    dynamic: bool = False  # references a runtime date (GETDATE/DATEADD/…)
+    truncated: bool = False
+
+
 @dataclass
 class SqlView:
     entity: str  # file stem == table name == dataflow entity
@@ -51,6 +60,7 @@ class SqlView:
     table: str = ""
     source_file: str = ""  # repo-relative path
     columns: dict[str, SqlColumn] = field(default_factory=dict)
+    filters: list[SqlFilter] = field(default_factory=list)  # top-level row scope
     _lower: dict[str, str] = field(default_factory=dict)  # lowercased name -> exact
 
     @property
@@ -292,6 +302,249 @@ def _split_fqn(raw: str) -> tuple[str, str, str]:
         return "", "", parts[0]
     return "", "", ""
 
+# ---------------------------------------------------------------------------
+# Row-scope (WHERE / HAVING) extraction
+# ---------------------------------------------------------------------------
+# Keywords that terminate a top-level predicate when scanning forward.
+_FILTER_BOUNDARY = frozenset(
+    {
+        "select", "from", "where", "group", "having", "order", "window",
+        "qualify", "limit", "offset", "union", "intersect", "except",
+        "on", "join", "inner", "left", "right", "full", "cross",
+        "lateral", "using", "returning",
+    }
+)
+# Functions whose presence makes a predicate a runtime (date) window rather than
+# a static exclusion.
+_DYNAMIC_RE = re.compile(
+    r"\b(getdate|getutcdate|sysdate|now|current_date|current_timestamp|dateadd)\b",
+    re.IGNORECASE,
+)
+
+
+# Tokens after which an opening paren introduces a *query container* (CTE body
+# or derived table) we descend into, rather than a value sub-query we skip.
+_TRANSPARENT_BEFORE_PAREN = frozenset(
+    {"as", "from", "join", "union", "all", "intersect", "except", "("}
+)
+
+
+def _where_having_starts(masked: str) -> list[tuple[str, int]]:
+    """Return ``(keyword, end_offset)`` for each row-scope ``WHERE`` / ``HAVING``.
+
+    A clause counts when it sits at **opaque-subquery depth 0** — i.e. it belongs
+    to the outer query or to a CTE / derived-table body (transparent containers),
+    but not to a value sub-query such as ``IN (SELECT … WHERE …)`` or
+    ``= (SELECT … WHERE …)`` (opaque containers, whose inner ``WHERE`` is part of
+    a value computation, not the view's row scope).
+    """
+    starts: list[tuple[str, int]] = []
+    odepth = 0
+    case = 0
+    opaque_stack: list[bool] = []
+    prev_sig: str | None = None
+    i = 0
+    n = len(masked)
+    while i < n:
+        ch = masked[i]
+        if ch == "(":
+            opaque = prev_sig not in _TRANSPARENT_BEFORE_PAREN
+            opaque_stack.append(opaque)
+            if opaque:
+                odepth += 1
+            prev_sig = "("
+            i += 1
+            continue
+        if ch == ")":
+            if opaque_stack and opaque_stack.pop():
+                odepth -= 1
+            prev_sig = ")"
+            i += 1
+            continue
+        if ch.isalpha() or ch == "_":
+            j = i
+            while j < n and (masked[j].isalnum() or masked[j] == "_"):
+                j += 1
+            word = masked[i:j].lower()
+            if word == "case":
+                case += 1
+            elif word == "end" and case > 0:
+                case -= 1
+            elif word in ("where", "having") and odepth == 0 and case == 0:
+                starts.append((word, j))
+            prev_sig = word
+            i = j
+            continue
+        if not ch.isspace():
+            prev_sig = ch
+        i += 1
+    return starts
+
+
+def _find_pred_end(masked: str, start: int) -> int:
+    """Return the offset where the predicate beginning at ``start`` ends.
+
+    The predicate ends at the next clause-boundary keyword (at its own paren/CASE
+    depth 0) or when the enclosing container's closing ``)`` is reached.
+    """
+    paren = 0
+    case = 0
+    i = start
+    n = len(masked)
+    while i < n:
+        ch = masked[i]
+        if ch == "(":
+            paren += 1
+            i += 1
+            continue
+        if ch == ")":
+            if paren == 0:
+                return i
+            paren -= 1
+            i += 1
+            continue
+        if ch.isalpha() or ch == "_":
+            j = i
+            while j < n and (masked[j].isalnum() or masked[j] == "_"):
+                j += 1
+            word = masked[i:j].lower()
+            if word == "case":
+                case += 1
+            elif word == "end" and case > 0:
+                case -= 1
+            elif paren == 0 and case == 0 and word in _FILTER_BOUNDARY:
+                return i
+            i = j
+            continue
+        i += 1
+    return n
+
+
+def _has_top_level_or(masked: str) -> bool:
+    """True if the slice contains an ``OR`` at paren/CASE depth 0."""
+    paren = 0
+    case = 0
+    i = 0
+    n = len(masked)
+    while i < n:
+        ch = masked[i]
+        if ch == "(":
+            paren += 1
+            i += 1
+            continue
+        if ch == ")":
+            paren -= 1
+            i += 1
+            continue
+        if ch.isalpha() or ch == "_":
+            j = i
+            while j < n and (masked[j].isalnum() or masked[j] == "_"):
+                j += 1
+            word = masked[i:j].lower()
+            if word == "case":
+                case += 1
+            elif word == "end" and case > 0:
+                case -= 1
+            elif word == "or" and paren == 0 and case == 0:
+                return True
+            i = j
+            continue
+        i += 1
+    return False
+
+
+def _split_predicate(original: str, masked: str) -> list[tuple[str, int]]:
+    """Split a predicate into ``(text, offset)`` on top-level ``AND``.
+
+    A predicate containing a top-level ``OR`` is kept whole, because splitting it
+    on ``AND`` would misrepresent operator precedence.
+    """
+    if _has_top_level_or(masked):
+        return [(original, 0)]
+    items: list[tuple[str, int]] = []
+    paren = 0
+    case = 0
+    between = 0
+    start = 0
+    i = 0
+    n = len(masked)
+    while i < n:
+        ch = masked[i]
+        if ch == "(":
+            paren += 1
+            i += 1
+        elif ch == ")":
+            paren -= 1
+            i += 1
+        elif ch.isalpha() or ch == "_":
+            j = i
+            while j < n and (masked[j].isalnum() or masked[j] == "_"):
+                j += 1
+            word = masked[i:j].lower()
+            if word == "case":
+                case += 1
+            elif word == "end" and case > 0:
+                case -= 1
+            elif word == "between" and paren == 0 and case == 0:
+                between += 1
+            elif word == "and" and paren == 0 and case == 0:
+                if between > 0:
+                    # The AND that belongs to a BETWEEN x AND y, not a separator.
+                    between -= 1
+                else:
+                    items.append((original[start:i], start))
+                    start = j
+            i = j
+        else:
+            i += 1
+    tail = original[start:]
+    if tail.strip():
+        items.append((tail, start))
+    return items
+
+
+def _extract_filters(
+    original: str, masked: str, derivation_cap: int
+) -> list[SqlFilter]:
+    """Extract row-scope ``WHERE`` / ``HAVING`` predicates as :class:`SqlFilter`.
+
+    Clauses in the outer query and in CTE / derived-table bodies are captured;
+    clauses inside value sub-queries (``IN (SELECT … WHERE …)``,
+    ``= (SELECT … WHERE …)``) are skipped, as those compute a value rather than
+    scope the view's rows. ``JOIN … ON`` predicates are intentionally not
+    captured (they are mostly join keys, not exclusions). Predicates duplicated
+    across CTEs are de-duplicated; ``BETWEEN x AND y`` is kept whole.
+    """
+    filters: list[SqlFilter] = []
+    seen: set[str] = set()
+    for word, end in _where_having_starts(masked):
+        pred_end = _find_pred_end(masked, end)
+        pred_original = original[end:pred_end]
+        pred_masked = masked[end:pred_end]
+        for sub_text, sub_off in _split_predicate(pred_original, pred_masked):
+            txt = re.sub(r"\s+", " ", sub_text).strip().strip(",").strip()
+            if not txt:
+                continue
+            truncated = len(txt) > derivation_cap
+            if truncated:
+                txt = txt[:derivation_cap].rstrip() + " …"
+            key = f"{word}\u0000{txt}"
+            if key in seen:
+                continue
+            seen.add(key)
+            line = original.count("\n", 0, end + sub_off) + 1
+            dynamic = bool(_DYNAMIC_RE.search(sub_text))
+            filters.append(
+                SqlFilter(
+                    text=txt,
+                    line=line,
+                    kind=word,
+                    dynamic=dynamic,
+                    truncated=truncated,
+                )
+            )
+    filters.sort(key=lambda f: (f.line, f.text))
+    return filters
 
 def parse_sql_view(
     path: Path,
@@ -338,6 +591,7 @@ def parse_sql_view(
         sql_col = SqlColumn(name=col, expression=expr, line=line, truncated=truncated)
         view.columns[col] = sql_col
         view._lower[col.lower()] = col
+    view.filters = _extract_filters(text, masked, derivation_cap)
     return view
 
 

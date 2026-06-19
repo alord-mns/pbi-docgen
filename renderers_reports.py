@@ -11,6 +11,18 @@ from . import cards
 from . import md
 from .cards import DocContext
 
+# Power BI visual types that are pure page chrome (decoration / navigation).
+# When such a visual carries no field binding it adds only noise to the card and
+# fragments it across retrieval chunks, so it is omitted from the Visuals table
+# (its count still feeds the header "N visual(s)" total). These are platform
+# visual-type identifiers, not solution-specific strings.
+_CHROME_VISUAL_TYPES = frozenset(
+    {"shape", "basicShape", "textbox", "actionButton", "image"}
+)
+
+# Cap on the number of distinct visual configurations listed per page.
+_MAX_VISUAL_ROWS = 40
+
 
 def _entity_to_dataflow(ctx: DocContext) -> dict[str, str]:
     out: dict[str, str] = {}
@@ -94,17 +106,45 @@ def render_page_card(ctx: DocContext, rep, page, ent2df: dict[str, str]) -> card
             parts.append(f"_…and {len(measures) - 40} more metric(s) on this page._")
 
     if other:
-        parts.append("")
-        parts.append("### Visuals")
-        parts.append("")
-        parts.append("| Type | Title | Fields |")
-        parts.append("|---|---|---|")
+        # Drop field-less page chrome (shapes / textboxes / buttons / images):
+        # it carries no analytical binding and only fragments the card. Then
+        # collapse repeated identical visual configurations (large pages repeat
+        # the same pivotTable many times) into one row with a count, so the card
+        # stays small enough to retrieve as one coherent chunk.
+        rows: list[tuple[str, str, str]] = []
+        counts: dict[tuple[str, str, str], int] = {}
         for v in other:
-            title = md.md_escape_pipe(v.title or v.visual_type) or "-"
+            if not v.fields and v.visual_type in _CHROME_VISUAL_TYPES:
+                continue
             flds = ", ".join(f"`{f.entity}.{f.member}`" for f in v.fields[:5])
             if len(v.fields) > 5:
                 flds += f" … ({len(v.fields)} total)"
-            parts.append(f"| `{v.visual_type}` | {title} | {md.md_escape_pipe(flds) or '-'} |")
+            title = md.md_escape_pipe(v.title or v.visual_type) or "-"
+            key = (v.visual_type, title, md.md_escape_pipe(flds) or "-")
+            if key not in counts:
+                counts[key] = 0
+                rows.append(key)
+            counts[key] += 1
+        if rows:
+            chrome_omitted = len(other) - sum(counts.values())
+            parts.append("")
+            parts.append("### Visuals")
+            parts.append("")
+            parts.append("| Type | Title | Fields | Count |")
+            parts.append("|---|---|---|---|")
+            for vtype, title, flds in rows[:_MAX_VISUAL_ROWS]:
+                parts.append(f"| `{vtype}` | {title} | {flds} | {counts[(vtype, title, flds)]} |")
+            notes: list[str] = []
+            if len(rows) > _MAX_VISUAL_ROWS:
+                notes.append(f"{len(rows) - _MAX_VISUAL_ROWS} more distinct visual(s) omitted")
+            if chrome_omitted:
+                notes.append(
+                    f"{chrome_omitted} decorative chrome visual(s) "
+                    "(shapes / textboxes / buttons / images) omitted"
+                )
+            if notes:
+                parts.append("")
+                parts.append("_… " + "; ".join(notes) + "._")
 
     parts.append("")
     parts.append("### Backing data")

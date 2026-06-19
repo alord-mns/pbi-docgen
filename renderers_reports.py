@@ -22,6 +22,14 @@ def _entity_to_dataflow(ctx: DocContext) -> dict[str, str]:
 
 def render_page_card(ctx: DocContext, rep, page, ent2df: dict[str, str]) -> cards.Card:
     label = page.display_name or page.folder
+    report_label = rep.name or ctx.model.name
+    if report_label.endswith(".Report"):
+        report_label = report_label[: -len(".Report")]
+    # Page names are not unique across reports (e.g. several reports each have a
+    # "Headlines" page). Stamp the report onto the card title so the card — and,
+    # via _stamp_section_headings, every "### Slicers · …" sub-section chunk — is
+    # self-locating and retrievable for the *specific* report being asked about.
+    page_title = f"{label} — {report_label}"
 
     slicers = [v for v in page.visuals if v.visual_type == "slicer"]
     other = [v for v in page.visuals if v.visual_type != "slicer"]
@@ -119,7 +127,7 @@ def render_page_card(ctx: DocContext, rep, page, ent2df: dict[str, str]) -> card
 
     return cards.Card(
         anchor=cards.card_anchor("page", f"{rep.name}::{page.name}"),
-        title=label,
+        title=page_title,
         kind="Report page",
         subtitle=f"{len(measures)} metric(s)",
         body="\n".join(parts),

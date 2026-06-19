@@ -179,12 +179,63 @@ def render_report_catalog(ctx: DocContext) -> cards.Card:
             f"| {i} | [{md.md_escape_pipe(rname)}](#{anchor}) | {len(rep.pages)} | "
             f"{visuals} | {purpose_txt} |"
         )
+    aliases = (
+        "report catalog", "report catalogue", "report index", "list of reports",
+        "all reports", "which reports", "report inventory", "reports available",
+    )
     return cards.Card(
         anchor=cards.card_anchor("report-catalog", "all"),
         title="Report Catalog",
         kind="Report index",
         subtitle=f"{len(reports)} report(s)",
-        keywords=tuple(r.name for r in reports if r.name),
+        keywords=aliases + tuple(r.name for r in reports if r.name),
+        body="\n".join(parts),
+    )
+
+
+def render_page_index(ctx: DocContext) -> cards.Card:
+    """A single self-sufficient card listing every page across every report.
+
+    Answers "list all pages" / "which page is X on" from one chunk, the
+    page-level counterpart to the Report Catalog. Pages keep their in-report
+    order; each row links to its own page card for visual / metric detail.
+    """
+    reports = ctx.reports or [ctx.lin.report]
+    reports = sorted(reports, key=lambda r: r.name or "")
+    total_pages = sum(len(r.pages) for r in reports)
+
+    parts: list[str] = []
+    parts.append(
+        f"**Pages:** {total_pages} across **{len(reports)}** report(s). "
+        "One row per page; follow a row to that page's card for its visuals, "
+        "slicers, filters, and metrics."
+    )
+    parts.append("")
+    parts.append("### Pages")
+    parts.append("")
+    parts.append("| # | Report | Page | Visuals | Filters |")
+    parts.append("|---|---|---|---|---|")
+    row = 0
+    for rep in reports:
+        rname = rep.name or ctx.model.name
+        rlink = f"[{md.md_escape_pipe(rname)}](#{cards.card_anchor('report', rname)})"
+        for page in rep.pages:
+            row += 1
+            label = page.display_name or page.folder
+            anchor = cards.card_anchor("page", f"{rep.name}::{page.name}")
+            parts.append(
+                f"| {row} | {rlink} | [{md.md_escape_pipe(label)}](#{anchor}) | "
+                f"{len(page.visuals)} | {len(page.filters)} |"
+            )
+    return cards.Card(
+        anchor=cards.card_anchor("page-index", "all"),
+        title="Page Index",
+        kind="Page index",
+        subtitle=f"{total_pages} page(s)",
+        keywords=(
+            "page index", "list of pages", "all pages", "which pages",
+            "page inventory", "every page", "pages available", "find a page",
+        ),
         body="\n".join(parts),
     )
 
@@ -220,6 +271,7 @@ def render_reports(ctx: DocContext) -> str:
     cardlist: list[cards.Card] = []
     reports = ctx.reports or [ctx.lin.report]
     cardlist.append(render_report_catalog(ctx))
+    cardlist.append(render_page_index(ctx))
     for rep in sorted(reports, key=lambda r: r.name or ""):
         cardlist.append(render_report_overview(ctx, rep))
         for page in rep.pages:
@@ -244,4 +296,10 @@ def render_reports(ctx: DocContext) -> str:
     )
 
 
-__all__ = ["render_page_card", "render_report_overview", "render_report_catalog", "render_reports"]
+__all__ = [
+    "render_page_card",
+    "render_report_overview",
+    "render_report_catalog",
+    "render_page_index",
+    "render_reports",
+]

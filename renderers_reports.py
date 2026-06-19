@@ -126,6 +126,69 @@ def render_page_card(ctx: DocContext, rep, page, ent2df: dict[str, str]) -> card
     )
 
 
+def _report_purpose(ctx: DocContext, rep) -> str:
+    """Curated one-line purpose for a report, looked up from ``[reports]``.
+
+    Matches by exact report name, then by the name without a trailing
+    ``.Report`` suffix. Returns an empty string when no purpose is configured,
+    so the caller can render a placeholder rather than invent one.
+    """
+    purposes = ctx.cfg.report_purposes
+    name = rep.name or ""
+    if name in purposes:
+        return purposes[name].strip()
+    stem = name[:-7] if name.endswith(".Report") else name
+    return purposes.get(stem, "").strip()
+
+
+def render_report_catalog(ctx: DocContext) -> cards.Card:
+    """A single self-sufficient card listing every report in the solution.
+
+    Answers "what reports exist?" from one chunk, so the agent never has to
+    stitch the per-report cards together. Purpose text is curated in
+    ``[reports]`` of ``.docgen.toml``; when absent a placeholder is shown rather
+    than an invented description.
+    """
+    reports = ctx.reports or [ctx.lin.report]
+    reports = sorted(reports, key=lambda r: r.name or "")
+    total_pages = sum(len(r.pages) for r in reports)
+    total_visuals = sum(len(p.visuals) for r in reports for p in r.pages)
+
+    parts: list[str] = []
+    parts.append(
+        f"**Reports:** {len(reports)} · **Pages:** {total_pages} · "
+        f"**Visuals:** {total_visuals} · **Connected model:** `{ctx.model.name}`"
+    )
+    parts.append("")
+    parts.append("The complete set of thin reports built on this semantic model. "
+                 "Each links to its own card listing pages, slicers, filters, and metrics.")
+    parts.append("")
+    parts.append("### Reports")
+    parts.append("")
+    parts.append("| # | Report | Pages | Visuals | Purpose |")
+    parts.append("|---|---|---|---|---|")
+    for i, rep in enumerate(reports, 1):
+        rname = rep.name or ctx.model.name
+        anchor = cards.card_anchor("report", rname)
+        visuals = sum(len(p.visuals) for p in rep.pages)
+        purpose = _report_purpose(ctx, rep)
+        purpose_txt = md.md_escape_pipe(purpose) if purpose else (
+            md.PLACEHOLDER + " — add to `[reports]` in `.docgen.toml`"
+        )
+        parts.append(
+            f"| {i} | [{md.md_escape_pipe(rname)}](#{anchor}) | {len(rep.pages)} | "
+            f"{visuals} | {purpose_txt} |"
+        )
+    return cards.Card(
+        anchor=cards.card_anchor("report-catalog", "all"),
+        title="Report Catalog",
+        kind="Report index",
+        subtitle=f"{len(reports)} report(s)",
+        keywords=tuple(r.name for r in reports if r.name),
+        body="\n".join(parts),
+    )
+
+
 def render_report_overview(ctx: DocContext, rep) -> cards.Card:
     rname = rep.name or ctx.model.name
     parts: list[str] = []
@@ -156,6 +219,7 @@ def render_reports(ctx: DocContext) -> str:
     ent2df = _entity_to_dataflow(ctx)
     cardlist: list[cards.Card] = []
     reports = ctx.reports or [ctx.lin.report]
+    cardlist.append(render_report_catalog(ctx))
     for rep in sorted(reports, key=lambda r: r.name or ""):
         cardlist.append(render_report_overview(ctx, rep))
         for page in rep.pages:
@@ -180,4 +244,4 @@ def render_reports(ctx: DocContext) -> str:
     )
 
 
-__all__ = ["render_page_card", "render_report_overview", "render_reports"]
+__all__ = ["render_page_card", "render_report_overview", "render_report_catalog", "render_reports"]

@@ -113,6 +113,7 @@ class Config:
     acronyms: dict[str, str] = field(default_factory=dict)
     headline_metrics: list[str] = field(default_factory=list)
     data_sources: list[DataSource] = field(default_factory=list)
+    report_purposes: dict[str, str] = field(default_factory=dict)
     app: App = field(default_factory=App)
     measures: MeasureRules = field(default_factory=MeasureRules)
     raw: dict = field(default_factory=dict)
@@ -162,6 +163,7 @@ def load(path: Path | None = None) -> Config:
     headline = (data.get("headline_metrics") or {}).get("names", []) or []
     app_t = data.get("app", {}) or {}
     sources_t = data.get("data_sources", []) or []
+    reports_t = data.get("reports", {}) or {}
     measures_t = data.get("measures", {}) or {}
     cfg = Config(
         solution=Solution(
@@ -231,6 +233,7 @@ def load(path: Path | None = None) -> Config:
             )
             for ds in sources_t
         ],
+        report_purposes={str(k): str(v) for k, v in reports_t.items()},
         raw=data,
     )
     return cfg

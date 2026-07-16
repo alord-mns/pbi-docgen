@@ -70,6 +70,9 @@ class SourceTrace:
     measure_to_tables: dict[str, set[str]] = field(default_factory=dict)
     measure_to_sql: dict[str, list[SourceDerivation]] = field(default_factory=dict)
     dataflow_to_measures: dict[str, set[str]] = field(default_factory=dict)
+    # Dataflow entity names produced by more than one dataflow (name-based
+    # lineage resolution is ambiguous for these — surfaced, never auto-resolved).
+    ambiguous_entities: frozenset[str] = frozenset()
 
     def derivations(self, measure: str) -> list[SourceDerivation]:
         return self.measure_to_sql.get(measure, [])
@@ -152,6 +155,11 @@ def _build_dataflow_entity_to_views(
                 for tbl in sqlsource.extract_databricks_tables(m_code):
                     if tbl.table not in views:
                         views.append(tbl.table)
+                for nq in sqlsource.extract_native_queries(m_code):
+                    for target in nq.tables:
+                        name = target.split(".")[-1]
+                        if name and name not in views:
+                            views.append(name)
                 ext.update(sqlsource.extract_dataflow_entities(m_code))
 
             _walk_m(query.expression, expr_by_name, collect)
@@ -186,6 +194,15 @@ def build_source_trace(
     """Build the measure → SQL derivation and dataflow → measure maps."""
     index = classification.index
     trace = SourceTrace()
+
+    # ---- entity-name collision detection (ambiguity, surfaced not resolved) ----
+    entity_producers: dict[str, set[str]] = {}
+    for df in lineage.dataflows:
+        for entity in df.entities:
+            entity_producers.setdefault(entity.name, set()).add(df.name)
+    trace.ambiguous_entities = frozenset(
+        name for name, dfs in entity_producers.items() if len(dfs) > 1
+    )
 
     # ---- hop 2 map: dataflow entity -> Databricks views ----
     trace.dataflow_entity_to_views = _build_dataflow_entity_to_views(lineage.dataflows)

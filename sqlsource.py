@@ -60,6 +60,7 @@ class SqlView:
     table: str = ""
     source_file: str = ""  # repo-relative path
     raw: str = ""  # full view text, newline-normalised (for source-code cards)
+    origin: str = "databricks-view"  # "databricks-view" | "native-query"
     columns: dict[str, SqlColumn] = field(default_factory=dict)
     filters: list[SqlFilter] = field(default_factory=list)  # top-level row scope
     _lower: dict[str, str] = field(default_factory=dict)  # lowercased name -> exact
@@ -86,6 +87,23 @@ class DatabricksTable:
     def fqn(self) -> str:
         parts = [p for p in (self.catalog, self.schema, self.table) if p]
         return ".".join(parts)
+
+
+@dataclass(frozen=True)
+class NativeQuery:
+    """An inline native SQL query passed to an M database connector, e.g.
+    ``DB2.Database(Server, Database, [Query = "SELECT …"])``.
+
+    ``sql`` is the decoded query text (M string escapes resolved). ``tables``
+    are the ``FROM`` / ``JOIN`` targets parsed from it. ``server`` / ``database``
+    are the leading connector arguments as written (often parameter names).
+    """
+
+    connector: str
+    server: str
+    database: str
+    sql: str
+    tables: tuple[str, ...] = ()
 
 
 @dataclass
@@ -573,32 +591,44 @@ def parse_sql_view(
     if not view.table:
         view.table = view.entity
 
-    bounds = _find_select_list(masked)
-    if not bounds:
-        return view
-    list_start, from_start = bounds
-    list_original = text[list_start:from_start]
-    list_masked = masked[list_start:from_start]
-    for item_text, offset in _split_select_items(list_original, list_masked, list_start):
-        item = item_text.strip()
-        if not item:
-            continue
-        item_masked = masked[offset : offset + len(item_text)]
-        # Re-align masked slice to the stripped item.
-        lead = len(item_text) - len(item_text.lstrip())
-        col = _output_column(item, item_masked[lead : lead + len(item)])
-        if not col:
-            continue
-        expr = re.sub(r"\s+", " ", item).strip()
-        truncated = len(expr) > derivation_cap
-        if truncated:
-            expr = expr[:derivation_cap].rstrip() + " …"
-        line = text.count("\n", 0, offset + lead) + 1
-        sql_col = SqlColumn(name=col, expression=expr, line=line, truncated=truncated)
-        view.columns[col] = sql_col
-        view._lower[col.lower()] = col
-    view.filters = _extract_filters(text, masked, derivation_cap)
+    _parse_columns_and_filters(view, text, masked, derivation_cap)
     return view
+
+
+def _parse_columns_and_filters(
+    view: SqlView, text: str, masked: str, derivation_cap: int
+) -> None:
+    """Populate ``view`` SELECT columns and row-scope filters from SQL ``text``.
+
+    ``masked`` is the string-/comment-masked companion of ``text`` (same length).
+    Shared by :func:`parse_sql_view` and :func:`build_native_query_view`.
+    """
+    bounds = _find_select_list(masked)
+    if bounds:
+        list_start, from_start = bounds
+        list_original = text[list_start:from_start]
+        list_masked = masked[list_start:from_start]
+        for item_text, offset in _split_select_items(
+            list_original, list_masked, list_start
+        ):
+            item = item_text.strip()
+            if not item:
+                continue
+            item_masked = masked[offset : offset + len(item_text)]
+            # Re-align masked slice to the stripped item.
+            lead = len(item_text) - len(item_text.lstrip())
+            col = _output_column(item, item_masked[lead : lead + len(item)])
+            if not col:
+                continue
+            expr = re.sub(r"\s+", " ", item).strip()
+            truncated = len(expr) > derivation_cap
+            if truncated:
+                expr = expr[:derivation_cap].rstrip() + " …"
+            line = text.count("\n", 0, offset + lead) + 1
+            sql_col = SqlColumn(name=col, expression=expr, line=line, truncated=truncated)
+            view.columns[col] = sql_col
+            view._lower[col.lower()] = col
+    view.filters = _extract_filters(text, masked, derivation_cap)
 
 
 def load_sql_catalog(
@@ -685,14 +715,198 @@ def extract_dataflow_entities(m_code: str) -> list[str]:
     return seen
 
 
+# ---------------------------------------------------------------------------
+# Inline native SQL query parsing (DB2 / Sql / Oracle / … [Query="…"])
+# ---------------------------------------------------------------------------
+# Database connectors that accept an inline native SQL query via a ``[Query=…]``
+# option record. These are Power BI platform function names, not solution
+# identifiers. The final ``\(`` anchors the connector's argument list.
+_NATIVE_CONNECTOR_RE = re.compile(
+    r"\b(DB2\.Database|Db2\.Database|Sql\.Databases?|Oracle\.Database|Odbc\.Query|"
+    r"Value\.NativeQuery|Snowflake\.Databases?|Teradata\.Database|"
+    r"PostgreSQL\.Database|MySQL\.Database)\s*\(",
+    re.IGNORECASE,
+)
+_QUERY_OPTION_RE = re.compile(r"\bQuery\s*=\s*\"")
+_M_ESCAPE_RE = re.compile(r"#\(([^)]*)\)")
+_M_ESCAPE_MAP = {"lf": "\n", "tab": "\t", "cr": "\r", "#": "#"}
+_FROM_TARGET_RE = re.compile(r"\b(?:from|join)\s+([A-Za-z_][\w.]*)", re.IGNORECASE)
+
+
+def _decode_escape(token: str) -> str:
+    out: list[str] = []
+    for part in token.split(","):
+        part = part.strip()
+        if part in _M_ESCAPE_MAP:
+            out.append(_M_ESCAPE_MAP[part])
+        elif re.fullmatch(r"[0-9A-Fa-f]{2,8}", part):
+            try:
+                out.append(chr(int(part, 16)))
+            except ValueError:
+                pass
+    return "".join(out)
+
+
+def _decode_m_string(raw: str) -> str:
+    """Decode an M string-literal body: ``""`` -> ``"`` and ``#(lf|tab|cr|#)``."""
+    unescaped = raw.replace('""', '"')
+    return _M_ESCAPE_RE.sub(lambda m: _decode_escape(m.group(1)), unescaped)
+
+
+def _read_m_string(text: str, start: int) -> tuple[str, int]:
+    """Read an M string literal starting at the opening quote ``text[start]``.
+
+    Returns ``(raw_body, end)`` — ``raw_body`` still carries doubled quotes and
+    ``#(...)`` escapes; ``end`` is the index just past the closing quote.
+    """
+    i = start + 1
+    n = len(text)
+    buf: list[str] = []
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            if i + 1 < n and text[i + 1] == '"':
+                buf.append('""')
+                i += 2
+                continue
+            return "".join(buf), i + 1
+        buf.append(ch)
+        i += 1
+    return "".join(buf), n
+
+
+def _matching_paren(text: str, open_idx: int) -> int:
+    """Return the index of the ``)`` matching ``text[open_idx] == '('``.
+
+    String literals are skipped so parentheses inside a native SQL query do not
+    unbalance the scan. Returns ``-1`` if unmatched.
+    """
+    depth = 0
+    i = open_idx
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            _, i = _read_m_string(text, i)
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _leading_two_args(segment: str) -> tuple[str, str]:
+    """Return the first two top-level arguments of a connector arg list."""
+    args: list[str] = []
+    depth = 0
+    start = 0
+    i = 0
+    n = len(segment)
+    while i < n and len(args) < 2:
+        ch = segment[i]
+        if ch == '"':
+            _, i = _read_m_string(segment, i)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append(segment[start:i].strip())
+            start = i + 1
+        i += 1
+    server = args[0].strip().strip('"') if args else ""
+    database = args[1].strip().strip('"') if len(args) > 1 else ""
+    return server, database
+
+
+def _from_targets(sql: str) -> list[str]:
+    masked = _mask_sql(sql)
+    seen: list[str] = []
+    for m in _FROM_TARGET_RE.finditer(masked):
+        name = sql[m.start(1) : m.end(1)]
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+def extract_native_queries(m_code: str) -> list[NativeQuery]:
+    """Return the inline native SQL queries embedded in an M query.
+
+    Detects database-connector calls (``DB2.Database``, ``Sql.Database`` …) that
+    carry a ``[Query = "…"]`` option record, decoding the M string escapes into
+    plain SQL. Databricks *navigation* sources (``[Name=…, Kind="Table"]``) are
+    handled separately by :func:`extract_databricks_tables`.
+    """
+    if not m_code:
+        return []
+    results: list[NativeQuery] = []
+    for cm in _NATIVE_CONNECTOR_RE.finditer(m_code):
+        open_paren = cm.end() - 1
+        end = _matching_paren(m_code, open_paren)
+        segment = m_code[open_paren + 1 : end if end != -1 else len(m_code)]
+        qm = _QUERY_OPTION_RE.search(segment)
+        if not qm:
+            continue
+        raw_body, _ = _read_m_string(segment, qm.end() - 1)
+        sql = _decode_m_string(raw_body).strip()
+        if not sql:
+            continue
+        server, database = _leading_two_args(segment)
+        results.append(
+            NativeQuery(
+                connector=cm.group(1),
+                server=server,
+                database=database,
+                sql=sql,
+                tables=tuple(_from_targets(sql)),
+            )
+        )
+    return results
+
+
+def build_native_query_view(
+    query_name: str,
+    nq: NativeQuery,
+    *,
+    source_file: str = "",
+    derivation_cap: int = DEFAULT_DERIVATION_CAP,
+) -> SqlView:
+    """Build a synthetic :class:`SqlView` from an inline native SQL query.
+
+    Keyed by the owning dataflow query name (the entity), so the entity → view
+    hop resolves to the query's projection rather than the raw physical table.
+    """
+    target = nq.tables[0] if nq.tables else ""
+    catalog, schema, table = _split_fqn(target) if target else ("", "", "")
+    view = SqlView(
+        entity=query_name,
+        catalog=catalog,
+        schema=schema,
+        table=table or query_name,
+        source_file=source_file,
+        raw=nq.sql,
+        origin="native-query",
+    )
+    _parse_columns_and_filters(view, nq.sql, _mask_sql(nq.sql), derivation_cap)
+    return view
+
+
 __all__ = [
     "DEFAULT_DERIVATION_CAP",
     "SqlColumn",
     "SqlView",
     "DatabricksTable",
+    "NativeQuery",
     "SqlCatalog",
     "parse_sql_view",
     "load_sql_catalog",
     "extract_databricks_tables",
     "extract_dataflow_entities",
+    "extract_native_queries",
+    "build_native_query_view",
 ]

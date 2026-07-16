@@ -234,7 +234,33 @@ def main(argv: list[str] | None = None) -> int:
     sql_catalog = sqlsource.load_sql_catalog(
         cfg.resolve(cfg.paths.sql_exports), repo_root=REPO_ROOT
     )
-    print(f"[docgen]   {len(sql_catalog.views_by_entity)} SQL view(s)")
+    # Register inline native SQL queries (e.g. DB2.Database([Query=…])) as
+    # synthetic views keyed by their FROM target, so entities backed by native
+    # SQL resolve to a projection instead of showing no source. Real exported
+    # views (loaded above) win on any key collision.
+    native_views = 0
+    for df in sorted(dataflows, key=lambda d: d.name):
+        for q in df.queries:
+            if q.is_parameter or not q.expression:
+                continue
+            for nq in sqlsource.extract_native_queries(q.expression):
+                key = nq.tables[0].split(".")[-1] if nq.tables else q.name
+                if not key or key in sql_catalog.views_by_entity:
+                    continue
+                try:
+                    rel_source = str(
+                        Path(df.source_file).resolve().relative_to(REPO_ROOT)
+                    ).replace("\\", "/")
+                except (ValueError, OSError):
+                    rel_source = df.source_file
+                sql_catalog.views_by_entity[key] = sqlsource.build_native_query_view(
+                    key, nq, source_file=rel_source
+                )
+                native_views += 1
+    print(
+        f"[docgen]   {len(sql_catalog.views_by_entity)} SQL view(s) "
+        f"({native_views} inline native query view(s))"
+    )
     print("[docgen] building two-hop source trace")
     trace = sourcetrace.build_source_trace(model, cls, sql_catalog, lin)
 

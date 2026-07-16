@@ -177,6 +177,32 @@ def render_dataflow_card(ctx: DocContext, d) -> cards.Card:
         ev_txt = ", ".join(f"`{v}`" for v in ev) or "—"
         parts.append(f"| `{md.md_escape_pipe(e.name)}` | {len(e.attributes)} | {ev_txt} |")
 
+    linked_refs = d.linked_dataflow_refs()
+    if linked_refs:
+        parts.append("")
+        parts.append("### Linked dataflows")
+        parts.append("")
+        parts.append("_Entities sourced from another dataflow via `PowerPlatform.Dataflows`._")
+        parts.append("")
+        parts.append("| Entity | Dataflow ID | Workspace |")
+        parts.append("|---|---|---|")
+        for workspace_id, dataflow_id, entity in linked_refs:
+            parts.append(
+                f"| `{md.md_escape_pipe(entity)}` | `{dataflow_id}` | `{workspace_id}` |"
+            )
+        ambiguous = sorted(
+            {e for _, _, e in linked_refs if e in ctx.trace.ambiguous_entities}
+        )
+        if ambiguous:
+            parts.append("")
+            parts.append(
+                "> **Ambiguous source(s):** "
+                + ", ".join(f"`{md.md_escape_pipe(e)}`" for e in ambiguous)
+                + " — this entity name is produced by more than one dataflow, so name-based "
+                "lineage resolution cannot determine the intended upstream. Rename to "
+                "disambiguate."
+            )
+
     parts.extend(_render_row_filters(ctx, entities))
 
     parts.append("")

@@ -91,12 +91,33 @@ def _sql_block(ctx: DocContext, view_name: str) -> list[str]:
     view = ctx.sql_catalog.view(view_name)
     if not view or not view.raw:
         return []
-    lines = [f"View `{view.fqn or view_name}` — source `{view.source_file}`:", ""]
+    if view.origin == "native-query":
+        label = (
+            f"Native SQL query for `{view.fqn or view_name}` — inline in "
+            f"`{view.source_file}`:"
+        )
+    else:
+        label = f"View `{view.fqn or view_name}` — source `{view.source_file}`:"
+    lines = [label, ""]
     lines.append("```sql")
     lines.append(view.raw.strip())
     lines.append("```")
     lines.append("")
     return lines
+
+
+def _sql_heading(ctx: DocContext, views: list[str]) -> str:
+    """Heading for the SQL section, reflecting whether sources are native."""
+    origins = {
+        ctx.sql_catalog.view(v).origin
+        for v in views
+        if ctx.sql_catalog.view(v)
+    }
+    if origins == {"native-query"}:
+        return "### Native SQL query"
+    if "native-query" in origins:
+        return "### SQL source (Databricks view / native query)"
+    return "### SQL view (Databricks)"
 
 
 def _entity_card(
@@ -123,7 +144,15 @@ def _entity_card(
     )
     parts.append("")
 
-    parts.append("### SQL view (Databricks)")
+    if entity in ctx.trace.ambiguous_entities:
+        parts.append(
+            f"**Ambiguous source:** the entity name `{md.md_escape_pipe(entity)}` is produced "
+            "by more than one dataflow, so the lineage below may conflate them. Resolve by "
+            "renaming the colliding entities, or disambiguate the reference by `dataflowId`."
+        )
+        parts.append("")
+
+    parts.append(_sql_heading(ctx, views))
     parts.append("")
     sql_lines: list[str] = []
     for v in views:
@@ -171,7 +200,7 @@ def _view_only_card(ctx: DocContext, view_name: str) -> cards.Card:
         f"**View:** `{view_name}` \u2014 exported Databricks view with no "
         "currently-resolved model consumer.",
         "",
-        "### SQL view (Databricks)",
+        _sql_heading(ctx, [view_name]),
         "",
     ]
     parts.extend(_sql_block(ctx, view_name))

@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import sqlsource
+
 
 @dataclass
 class DataflowAttribute:
@@ -54,6 +56,13 @@ class Dataflow:
                 "Databricks.Catalogs",
                 "Sql.Database",
                 "Sql.Databases",
+                "DB2.Database",
+                "Db2.Database",
+                "Oracle.Database",
+                "Snowflake.Databases",
+                "Teradata.Database",
+                "PostgreSQL.Database",
+                "MySQL.Database",
                 "AzureDataLake.",
                 "AzureBlobStorage.",
                 "SharePoint.Files",
@@ -64,12 +73,47 @@ class Dataflow:
             ):
                 if marker in q.expression:
                     sources.add(marker.rstrip("."))
+        if self.linked_dataflow_refs():
+            sources.add("Linked dataflow")
+        if self.native_queries():
+            sources.add("Native SQL query")
         return sorted(sources)
+
+    def native_queries(self) -> list[sqlsource.NativeQuery]:
+        """Inline native SQL queries (``[Query="…"]``) across all queries."""
+        found: list[sqlsource.NativeQuery] = []
+        for q in self.queries:
+            if q.is_parameter:
+                continue
+            found.extend(sqlsource.extract_native_queries(q.expression))
+        return found
+
+    def linked_dataflow_refs(self) -> list[tuple[str, str, str]]:
+        """Cross-dataflow references made via ``PowerPlatform.Dataflows`` /
+        ``PowerBI.Dataflows`` navigations.
+
+        Returns a sorted, de-duplicated list of ``(workspace_id, dataflow_id,
+        entity)`` triples extracted from the M of each non-parameter query.
+        """
+        refs: set[tuple[str, str, str]] = set()
+        for q in self.queries:
+            if q.is_parameter:
+                continue
+            if "PowerPlatform.Dataflows" not in q.expression and "PowerBI.Dataflows" not in q.expression:
+                continue
+            for m in _LINKED_DATAFLOW_RE.finditer(q.expression):
+                refs.add((m.group(1), m.group(2), m.group(3)))
+        return sorted(refs)
 
 
 _SHARED_RE = re.compile(
     r"shared\s+(?:#\"([^\"]+)\"|([A-Za-z_][A-Za-z0-9_]*))\s*=\s*",
     re.MULTILINE,
+)
+
+_LINKED_DATAFLOW_RE = re.compile(
+    r'workspaceId\s*=\s*"([^"]+)".*?dataflowId\s*=\s*"([^"]+)".*?entity\s*=\s*"([^"]+)"',
+    re.DOTALL,
 )
 
 

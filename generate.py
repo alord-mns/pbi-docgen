@@ -29,6 +29,7 @@ from . import renderers_model_metrics as rmm
 from . import renderers_overview as ro
 from . import renderers_pipeline as rp
 from . import renderers_reports as rr
+from . import renderers_source_code as rsc
 
 REPO_ROOT = md.REPO_ROOT
 DOCS = md.DOCS
@@ -264,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     kb_outputs.extend(rmm.render_model_and_metrics(ctx))
     kb_outputs.append(("02-data-pipeline.md", rp.render_data_pipeline(ctx)))
     kb_outputs.append(("03-reports.md", rr.render_reports(ctx)))
+    if cfg.source_code_enabled:
+        kb_outputs.append(("04-source-code.md", rsc.render_source_code(ctx)))
     for filename, text in kb_outputs:
         emit(DOCS / filename, text)
 

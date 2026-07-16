@@ -116,6 +116,7 @@ class Config:
     report_purposes: dict[str, str] = field(default_factory=dict)
     app: App = field(default_factory=App)
     measures: MeasureRules = field(default_factory=MeasureRules)
+    source_code_enabled: bool = False
     raw: dict = field(default_factory=dict)
 
     # Convenience accessors -------------------------------------------------
@@ -165,6 +166,7 @@ def load(path: Path | None = None) -> Config:
     sources_t = data.get("data_sources", []) or []
     reports_t = data.get("reports", {}) or {}
     measures_t = data.get("measures", {}) or {}
+    source_code_t = data.get("source_code", {}) or {}
     cfg = Config(
         solution=Solution(
             display_name=sol.get("display_name", ""),
@@ -234,6 +236,7 @@ def load(path: Path | None = None) -> Config:
             for ds in sources_t
         ],
         report_purposes={str(k): str(v) for k, v in reports_t.items()},
+        source_code_enabled=bool(source_code_t.get("enabled", False)),
         raw=data,
     )
     return cfg

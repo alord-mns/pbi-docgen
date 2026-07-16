@@ -342,6 +342,16 @@ def render_table_card(ctx: DocContext, table) -> cards.Card:
     if views:
         parts.append("")
         parts.append("**Databricks view(s):** " + ", ".join(f"`{v}`" for v in views))
+    if entities and ctx.cfg.source_code_enabled:
+        parts.append("")
+        parts.append(
+            "**Source code:** "
+            + ", ".join(
+                f"[Source lineage · {e}](#{cards.card_anchor('source-lineage', e)})"
+                for e in entities
+            )
+            + " (`04-source-code.md`)"
+        )
     if not entities and not views:
         if table.is_calculated:
             parts.append("_Calculated table (defined in DAX); no external source._")

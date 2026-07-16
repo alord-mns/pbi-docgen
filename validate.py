@@ -85,11 +85,12 @@ def _split_cards(text: str) -> list[CardBlock]:
 # ---------------------------------------------------------------------------
 # Gates
 # ---------------------------------------------------------------------------
-def _check_files_present(docs: Path) -> tuple[bool, str]:
-    missing = [f for f in KB_FILES if not (docs / f).exists()]
+def _check_files_present(docs: Path, extra: tuple[str, ...] = ()) -> tuple[bool, str]:
+    expected = list(KB_FILES) + list(extra)
+    missing = [f for f in expected if not (docs / f).exists()]
     if missing:
         return False, f"Missing knowledge-base file(s): {missing}"
-    return True, f"All {len(KB_FILES)} knowledge-base files present."
+    return True, f"All {len(expected)} knowledge-base files present."
 
 
 def _check_anchor_uniqueness(blobs: dict[str, str]) -> tuple[bool, str]:
@@ -214,6 +215,23 @@ def _check_secrets(blobs: dict[str, str]) -> tuple[bool, str]:
     return True, "No secrets, recipient emails, or Teams thread IDs found."
 
 
+def _check_source_code(blob: str) -> tuple[bool, str]:
+    """Every source-lineage card must carry code or an explicit absence note."""
+    cards_ = [c for c in _split_cards(blob) if c.kind.startswith("Source lineage (code)")]
+    if not cards_:
+        return False, "04-source-code.md emitted but contains no source-lineage cards."
+    bad: list[str] = []
+    for c in cards_:
+        has_code = "```sql" in c.text or "```powerquery-m" in c.text
+        has_note = "_No SQL export" in c.text or "_No dataflow M query" in c.text
+        is_connection = c.title == "Connection parameters"
+        if not (has_code or has_note or is_connection):
+            bad.append(c.title)
+    if bad:
+        return False, f"{len(bad)} card(s) missing code / absence note: {bad[:5]}"
+    return True, f"All {len(cards_)} source-lineage card(s) carry code or a documented absence."
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -240,13 +258,17 @@ def main(argv: list[str] | None = None) -> int:
         base_prefixes=tuple(cfg.measures.base_prefixes),
     )
 
-    files_ok, files_msg = _check_files_present(DOCS)
+    files_ok, files_msg = _check_files_present(
+        DOCS, extra=("04-source-code.md",) if cfg.source_code_enabled else ()
+    )
 
     # Discover the full knowledge base, including any size-split 01 parts.
     kb_files = list(KB_FILES)
     for p in sorted(DOCS.glob("01-model-and-metrics-*.md")):
         if p.name not in kb_files:
             kb_files.append(p.name)
+    if (DOCS / "04-source-code.md").exists() and "04-source-code.md" not in kb_files:
+        kb_files.append("04-source-code.md")
     blobs: dict[str, str] = {}
     for f in kb_files:
         p = DOCS / f
@@ -275,6 +297,10 @@ def main(argv: list[str] | None = None) -> int:
     gates.append(("Dataflow downstream impact", *_check_downstream_impact(pipeline_cards)))
     gates.append(("Acronyms documented", *_check_acronyms(cfg, blobs["00-overview.md"])))
     gates.append(("No sensitive data", *_check_secrets(blobs)))
+    if cfg.source_code_enabled and blobs.get("04-source-code.md"):
+        gates.append(
+            ("Source-lineage cards carry code", *_check_source_code(blobs["04-source-code.md"]))
+        )
 
     overall = all(ok for _name, ok, _msg in gates)
     rows = ["| Gate | Status | Detail |", "| --- | --- | --- |"]

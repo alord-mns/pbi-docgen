@@ -59,6 +59,7 @@ class SqlView:
     schema: str = ""
     table: str = ""
     source_file: str = ""  # repo-relative path
+    raw: str = ""  # full view text, newline-normalised (for source-code cards)
     columns: dict[str, SqlColumn] = field(default_factory=dict)
     filters: list[SqlFilter] = field(default_factory=list)  # top-level row scope
     _lower: dict[str, str] = field(default_factory=dict)  # lowercased name -> exact
@@ -557,7 +558,12 @@ def parse_sql_view(
     text = path.read_text(encoding="utf-8", errors="replace")
     masked = _mask_sql(text)
     rel = str(path.relative_to(repo_root)) if repo_root else path.name
-    view = SqlView(entity=entity or path.stem, source_file=rel.replace("\\", "/"))
+    normalised = text.replace("\r\n", "\n").replace("\r", "\n")
+    view = SqlView(
+        entity=entity or path.stem,
+        source_file=rel.replace("\\", "/"),
+        raw=normalised,
+    )
 
     create = _CREATE_VIEW_RE.search(masked)
     if create:

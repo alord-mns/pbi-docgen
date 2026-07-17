@@ -22,6 +22,7 @@ from . import lineage as lineagemod
 from . import md
 from . import orchestration as orcmod
 from . import pbir as pbirmod
+from . import power_apps as pamod
 from . import tmdl
 from . import cards
 from .generate import (
@@ -232,6 +233,20 @@ def _check_source_code(blob: str) -> tuple[bool, str]:
     return True, f"All {len(cards_)} source-lineage card(s) carry code or a documented absence."
 
 
+def _check_power_apps(blob: str) -> tuple[bool, str]:
+    """Each canvas Power App card must carry connector and data-source sections."""
+    cards_ = [c for c in _split_cards(blob) if c.kind.startswith("Power App")]
+    if not cards_:
+        return True, "No Power App cards to check."
+    bad: list[str] = []
+    for c in cards_:
+        if "### Connectors" not in c.text or "### Data sources" not in c.text:
+            bad.append(c.title or c.anchor)
+    if bad:
+        return False, f"{len(bad)} Power App card(s) missing connector/data-source section: {bad[:5]}"
+    return True, f"All {len(cards_)} Power App card(s) carry connector and data-source sections."
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -258,9 +273,18 @@ def main(argv: list[str] | None = None) -> int:
         base_prefixes=tuple(cfg.measures.base_prefixes),
     )
 
-    files_ok, files_msg = _check_files_present(
-        DOCS, extra=("04-source-code.md",) if cfg.source_code_enabled else ()
+    # Canvas Power Apps are presence-driven: the 05 file is required only when
+    # at least one unpacked app is discovered under the configured glob.
+    power_apps = pamod.load_power_apps(
+        cfg.resolve_many(cfg.paths.power_apps_definitions), repo_root=md.REPO_ROOT
     )
+
+    extra_files: list[str] = []
+    if cfg.source_code_enabled:
+        extra_files.append("04-source-code.md")
+    if power_apps:
+        extra_files.append("05-power-apps.md")
+    files_ok, files_msg = _check_files_present(DOCS, extra=tuple(extra_files))
 
     # Discover the full knowledge base, including any size-split 01 parts.
     kb_files = list(KB_FILES)
@@ -269,6 +293,8 @@ def main(argv: list[str] | None = None) -> int:
             kb_files.append(p.name)
     if (DOCS / "04-source-code.md").exists() and "04-source-code.md" not in kb_files:
         kb_files.append("04-source-code.md")
+    if (DOCS / "05-power-apps.md").exists() and "05-power-apps.md" not in kb_files:
+        kb_files.append("05-power-apps.md")
     blobs: dict[str, str] = {}
     for f in kb_files:
         p = DOCS / f
@@ -300,6 +326,10 @@ def main(argv: list[str] | None = None) -> int:
     if cfg.source_code_enabled and blobs.get("04-source-code.md"):
         gates.append(
             ("Source-lineage cards carry code", *_check_source_code(blobs["04-source-code.md"]))
+        )
+    if power_apps and blobs.get("05-power-apps.md"):
+        gates.append(
+            ("Power App cards complete", *_check_power_apps(blobs["05-power-apps.md"]))
         )
 
     overall = all(ok for _name, ok, _msg in gates)

@@ -225,6 +225,19 @@ def render_dataflow_card(ctx: DocContext, d) -> cards.Card:
     parts.append("")
     parts.append("**Report pages affected:** " + cards.page_list(ctx, down_pages))
 
+    writeback = ctx.app_writeback.get(d.name)
+    if writeback:
+        app_names = sorted({app for app, _ in writeback})
+        parts.append("")
+        parts.append(
+            "**Written by Power App(s):** "
+            + ", ".join(
+                f"[{a}](#{cards.card_anchor('power-app', a)})" for a in app_names
+            )
+            + " \u2014 an app writes into a store this dataflow reads, so upstream "
+            "edits can enter the pipeline here."
+        )
+
     return cards.Card(
         anchor=cards.card_anchor("dataflow", d.name),
         title=d.name,

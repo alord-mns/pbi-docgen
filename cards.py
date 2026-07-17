@@ -32,6 +32,7 @@ from . import dax_refs
 from . import lineage as lineagemod
 from . import md
 from . import pbir as pbirmod
+from . import power_apps as pamod
 from . import sourcetrace
 from . import sqlsource
 from . import tmdl
@@ -178,6 +179,9 @@ class DocContext:
     cls: dax_refs.Classification
     trace: sourcetrace.SourceTrace
     sql_catalog: sqlsource.SqlCatalog
+    power_apps: list = field(default_factory=list)
+    # dataflow name -> [(app name, writable source name), ...] write-back edges
+    app_writeback: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     # ---- precomputed reverse maps (built by build_context) ----
     measure_pages: dict[str, set[str]] = field(default_factory=dict)
     selected_by: dict[str, list[str]] = field(default_factory=dict)
@@ -202,6 +206,7 @@ def build_context(
     cls: dax_refs.Classification,
     trace: sourcetrace.SourceTrace,
     sql_catalog: sqlsource.SqlCatalog,
+    power_apps: list | None = None,
 ) -> DocContext:
     """Build the shared context + reverse maps used by every renderer."""
     ctx = DocContext(
@@ -214,6 +219,8 @@ def build_context(
         cls=cls,
         trace=trace,
         sql_catalog=sql_catalog,
+        power_apps=list(power_apps or []),
+        app_writeback=pamod.writeback_links(power_apps or [], dataflows),
     )
 
     # measure name -> report page labels (bare member name).

@@ -28,6 +28,7 @@ _DEFAULT_PATHS = {
     "excluded_report_definitions": ["src/semantic-model/*.Report/definition"],
     "dataflow_exports": "dataflows/*.json",
     "orchestration_definitions": ["orchestration/**/definition.json"],
+    "power_apps_definitions": ["power-apps/**/CanvasManifest.json"],
     "sql_exports": "sql/*.sql",
 }
 
@@ -73,6 +74,9 @@ class Paths:
     orchestration_definitions: list[str] = field(
         default_factory=lambda: list(_DEFAULT_PATHS["orchestration_definitions"])
     )
+    power_apps_definitions: list[str] = field(
+        default_factory=lambda: list(_DEFAULT_PATHS["power_apps_definitions"])
+    )
     sql_exports: str = _DEFAULT_PATHS["sql_exports"]
 
 
@@ -84,7 +88,13 @@ class Narratives:
 
 
 @dataclass
-class App:
+class PowerBiApp:
+    """Power BI *distribution* App (the audience app that publishes reports).
+
+    This is NOT a Power Platform canvas Power App. Canvas apps are parsed by
+    ``power_apps.py`` and configured via ``[paths] power_apps_definitions``.
+    """
+
     name: str = ""
     purpose: str = ""
     audience: str = ""
@@ -114,7 +124,7 @@ class Config:
     headline_metrics: list[str] = field(default_factory=list)
     data_sources: list[DataSource] = field(default_factory=list)
     report_purposes: dict[str, str] = field(default_factory=dict)
-    app: App = field(default_factory=App)
+    powerbi_app: PowerBiApp = field(default_factory=PowerBiApp)
     measures: MeasureRules = field(default_factory=MeasureRules)
     source_code_enabled: bool = False
     raw: dict = field(default_factory=dict)
@@ -162,11 +172,23 @@ def load(path: Path | None = None) -> Config:
     nar = data.get("narratives", {}) or {}
     acro = data.get("acronyms", {}) or {}
     headline = (data.get("headline_metrics") or {}).get("names", []) or []
-    app_t = data.get("app", {}) or {}
+    # `[powerbi_app]` is the Power BI distribution App. Fall back to the legacy
+    # `[app]` section name for backward compatibility.
+    powerbi_app_t = data.get("powerbi_app", data.get("app", {})) or {}
     sources_t = data.get("data_sources", []) or []
     reports_t = data.get("reports", {}) or {}
     measures_t = data.get("measures", {}) or {}
     source_code_t = data.get("source_code", {}) or {}
+    # Source-code cards are presence-driven: emitted whenever there is source to
+    # document (dataflows and/or SQL exports). An explicit `enabled = false`
+    # opt-out still forces them off (raw SQL can be sensitive in some repos).
+    _df_pattern = paths_t.get("dataflow_exports", _DEFAULT_PATHS["dataflow_exports"])
+    _sql_pattern = paths_t.get("sql_exports", _DEFAULT_PATHS["sql_exports"])
+    _has_source = bool(
+        list(REPO_ROOT.glob(_df_pattern)) or list(REPO_ROOT.glob(_sql_pattern))
+    )
+    _sc_setting = source_code_t.get("enabled", None)
+    source_code_enabled = bool(_sc_setting) if _sc_setting is not None else _has_source
     cfg = Config(
         solution=Solution(
             display_name=sol.get("display_name", ""),
@@ -206,6 +228,12 @@ def load(path: Path | None = None) -> Config:
                     _DEFAULT_PATHS["orchestration_definitions"],
                 )
             ),
+            power_apps_definitions=list(
+                paths_t.get(
+                    "power_apps_definitions",
+                    _DEFAULT_PATHS["power_apps_definitions"],
+                )
+            ),
             sql_exports=paths_t.get("sql_exports", _DEFAULT_PATHS["sql_exports"]),
         ),
         narratives=Narratives(
@@ -215,10 +243,10 @@ def load(path: Path | None = None) -> Config:
         ),
         acronyms=dict(acro),
         headline_metrics=list(headline),
-        app=App(
-            name=app_t.get("name", ""),
-            purpose=app_t.get("purpose", ""),
-            audience=app_t.get("audience", ""),
+        powerbi_app=PowerBiApp(
+            name=powerbi_app_t.get("name", ""),
+            purpose=powerbi_app_t.get("purpose", ""),
+            audience=powerbi_app_t.get("audience", ""),
         ),
         measures=MeasureRules(
             selector_prefixes=list(measures_t.get("selector_prefixes", []) or []),
@@ -236,7 +264,7 @@ def load(path: Path | None = None) -> Config:
             for ds in sources_t
         ],
         report_purposes={str(k): str(v) for k, v in reports_t.items()},
-        source_code_enabled=bool(source_code_t.get("enabled", False)),
+        source_code_enabled=source_code_enabled,
         raw=data,
     )
     return cfg
@@ -249,7 +277,7 @@ __all__ = [
     "Paths",
     "Narratives",
     "DataSource",
-    "App",
+    "PowerBiApp",
     "MeasureRules",
     "load",
     "REPO_ROOT",

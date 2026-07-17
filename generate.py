@@ -21,6 +21,7 @@ from . import lineage as lineagemod
 from . import md
 from . import orchestration as orcmod
 from . import pbir as pbirmod
+from . import power_apps as pamod
 from . import sourcetrace
 from . import sqlsource
 from . import tmdl
@@ -30,6 +31,7 @@ from . import renderers_overview as ro
 from . import renderers_pipeline as rp
 from . import renderers_reports as rr
 from . import renderers_source_code as rsc
+from . import renderers_power_apps as rpa
 
 REPO_ROOT = md.REPO_ROOT
 DOCS = md.DOCS
@@ -194,6 +196,18 @@ def main(argv: list[str] | None = None) -> int:
             f"workspaces: {sorted(f.workspace_ids)}"
         )
 
+    # ---- Power Platform canvas Power Apps (presence-driven) ----
+    power_app_paths = cfg.resolve_many(cfg.paths.power_apps_definitions)
+    power_apps = pamod.load_power_apps(power_app_paths, repo_root=REPO_ROOT)
+    if power_apps:
+        print(f"[docgen] loading {len(power_apps)} canvas Power App(s)")
+        for a in power_apps:
+            print(
+                f"[docgen]   `{a.name}` — {len(a.screens)} screen(s), "
+                f"{len(a.connectors)} connector(s), "
+                f"{len(a.data_sources)} data source(s)"
+            )
+
     # ---- Lineage ----
     print("[docgen] building lineage graph")
     lin = lineagemod.build(
@@ -275,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         cls=cls,
         trace=trace,
         sql_catalog=sql_catalog,
+        power_apps=power_apps,
     )
 
     # ---- Write phase (skip files whose content is unchanged) ----
@@ -293,6 +308,8 @@ def main(argv: list[str] | None = None) -> int:
     kb_outputs.append(("03-reports.md", rr.render_reports(ctx)))
     if cfg.source_code_enabled:
         kb_outputs.append(("04-source-code.md", rsc.render_source_code(ctx)))
+    if power_apps:
+        kb_outputs.append(("05-power-apps.md", rpa.render_power_apps(ctx)))
     for filename, text in kb_outputs:
         emit(DOCS / filename, text)
 

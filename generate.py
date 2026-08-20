@@ -6,7 +6,7 @@ Run:
 
 The engine is model-agnostic. All repo-specific data (workspace IDs,
 narratives, data-source descriptions, acronyms) is loaded from
-``docs/.docgen.toml`` via :mod:`scripts.docgen.config`.
+``model-docs/.docgen.toml`` via :mod:`scripts.docgen.config`.
 """
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def _resolve_semantic_model(cfg: configmod.Config) -> Path:
     if not matches:
         raise SystemExit(
             f"[docgen] no semantic-model definition matched "
-            f"`{cfg.paths.semantic_model_definition}` — set `paths.semantic_model_definition` in docs/.docgen.toml"
+            f"`{cfg.paths.semantic_model_definition}` — set `paths.semantic_model_definition` in model-docs/.docgen.toml"
         )
     if len(matches) > 1:
         print(
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     report_defs = _resolve_report_definitions(cfg)
     if not report_defs:
         raise SystemExit(
-            "[docgen] no report definitions matched — check `paths.thin_report_definitions` in docs/.docgen.toml"
+            "[docgen] no report definitions matched — check `paths.thin_report_definitions` in model-docs/.docgen.toml"
         )
     reports = []
     for rd in report_defs:

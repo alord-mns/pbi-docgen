@@ -4,11 +4,10 @@ Parses the tab-indented TMDL format under
 ``src/semantic-model/<name>.SemanticModel/definition/`` into plain
 dataclasses suitable for rendering Markdown documentation.
 
-The parser is intentionally tolerant: it handles only the constructs that
-appear in the FH&B Weekly model (table / measure / column / partition /
-calculationGroup / hierarchy / relationship / expression / role) and
-leaves unrecognised lines on the owning entity's ``raw`` list so they can
-be inspected later if needed.
+The parser is intentionally tolerant: it handles the common TMDL constructs
+(table / measure / column / partition / calculationGroup / hierarchy /
+relationship / expression / role) and leaves unrecognised lines on the owning
+entity's ``raw`` list so they can be inspected later if needed.
 """
 from __future__ import annotations
 

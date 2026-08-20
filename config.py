@@ -152,7 +152,7 @@ class Config:
 
 # --- Loader ----------------------------------------------------------------
 def load(path: Path | None = None) -> Config:
-    """Load `docs/.docgen.toml` (or a custom path) into a `Config` object.
+    """Load ``model-docs/.docgen.toml`` (or a custom path) into a `Config` object.
 
     A missing file produces a default config with empty narratives and the
     convention paths above; the engine then renders neutral placeholders.

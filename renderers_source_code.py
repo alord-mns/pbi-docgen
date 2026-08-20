@@ -161,7 +161,8 @@ def _entity_card(
         parts.extend(sql_lines)
     else:
         parts.append(
-            "_No SQL export for this entity (e.g. CSV / manual upload / freehand table)._"
+            "_No SQL export for this entity (e.g. CSV / manual upload / "
+            "hand-maintained table)._"
         )
         parts.append("")
 

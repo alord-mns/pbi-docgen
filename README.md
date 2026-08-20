@@ -35,9 +35,9 @@ output (after the first run stabilises on-disk).
 4. **Writing** — `md.write()` only writes files whose content has
    actually changed; unchanged files keep their mtime so `git status`
    reflects real edits.
-5. **Sweep** — any file under `model-docs/` that existed before the
-   run but was not produced by it is removed (protected files are
-   kept by name).
+5. **Sweep** — any file under `model-docs/` or `model-docs-txt/` that
+   existed before the run but was not produced by it is removed
+   (protected files are kept by name).
 6. **Generation log** — a one-line entry is prepended to
    [`model-docs/generation-log.md`](../../model-docs/generation-log.md)
    recording the changed / removed / unchanged counts.
@@ -65,8 +65,8 @@ deliberate choice; the alternative was considered and rejected.
   only take effect for the files happening to be regenerated. Full
   regeneration plus a sweep of orphaned files eliminates that whole
   class of bug.
-- The output is small (~60 files) and rendering takes a few seconds.
-  There is no real performance problem to solve.
+- The output is a couple of dozen files and rendering takes a few
+  seconds. There is no real performance problem to solve.
 - Git already provides the "what changed" view for free —
   `git diff --stat model-docs/` after a run tells you exactly which
   documents moved.
@@ -151,9 +151,15 @@ holds.
 | `pbir.py` | Parse PBIR into pages / visuals / slicers / filters |
 | `dataflow.py` | Parse `dataflows/*.json` |
 | `orchestration.py` | Parse Power Automate / Logic App workflow JSON |
-| `lineage.py` | Build the source → dataflow → table → page → report → app graph, with orchestration overlays |
+| `power_apps.py` | Parse unpacked canvas Power Apps; resolve app write-back → dataflow edges |
+| `sqlsource.py` | Parse SQL view exports and inline native queries into per-column derivations |
+| `sourcetrace.py` | Deterministic two-hop model → dataflow-entity → SQL-view source trace |
+| `dax_refs.py` | DAX reference extraction and the five-role measure classifier |
+| `lineage.py` | Build the source → dataflow → table → page → report → Power BI App graph, with orchestration overlays |
 | `md.py` | Markdown writing primitives (idempotent, write-on-change) |
-| `renderers_*.py` | Document-set renderers (one per `model-docs/` subtree) |
+| `cards.py` | Card model (`Card`, `card_anchor`, `render_bundle`) and the shared `DocContext` |
+| `renderers_*.py` | One renderer per knowledge-base file |
+| `doctor.py` | Preflight check: resolve globs, report what will be emitted |
 | `generate.py` | Orchestrator: load config, parse, render, sweep, log |
 | `validate.py` | Quality-gate runner |
 
@@ -162,14 +168,14 @@ holds.
 From the repo root:
 
 ```powershell
+python -m scripts.docgen.doctor      # optional preflight
 python -m scripts.docgen.generate
 python -m scripts.docgen.validate
 ```
 
-`generate` rewrites `model-docs/` (preserving protected files).
-`validate` runs eleven quality gates and embeds the result into
-[`model-docs/README.md`](../../model-docs/README.md) between the
-`<!-- VALIDATION:START -->` markers.
+`generate` rewrites `model-docs/` (preserving protected files) and the
+plain-text mirror `model-docs-txt/`. `validate` runs the quality gates
+and prints a pass/fail table, exiting non-zero on failure.
 
 ## Related documents
 
@@ -178,7 +184,7 @@ python -m scripts.docgen.validate
 - [`.github/instructions/docgen.instructions.md`](../../.github/instructions/docgen.instructions.md)
   — coding rules for the engine itself (no solution-specific strings,
   idempotency required, read-only over source).
-- [`MIGRATING.md`](../../MIGRATING.md) — porting the engine to a new
-  Power BI repository.
+- [`MIGRATING.md`](../../MIGRATING.md) — porting the engine to another
+  Power BI repository (copy list, config, preflight, troubleshooting).
 - [`model-docs/documentation_req.md`](../../model-docs/documentation_req.md)
   — the canonical specification of every document the engine produces.

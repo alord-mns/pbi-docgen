@@ -14,8 +14,8 @@ The parser extracts:
 * every notification channel (Teams, SharePoint list write, email)
 * every connector reference
 
-The model is deliberately model-agnostic: it does not know about FH&B
-or any specific dataflow names. Friendly-name resolution against the
+The model is deliberately solution-agnostic: it does not know about any
+specific solution or dataflow names. Friendly-name resolution against the
 TMDL / dataflow exports is the responsibility of the lineage builder.
 """
 from __future__ import annotations

@@ -13,6 +13,7 @@ non-zero if any gate fails; it never mutates the generated files.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from . import config as configmod
@@ -26,7 +27,7 @@ from . import power_apps as pamod
 from . import tmdl
 from . import cards
 from .generate import (
-    DOCS,
+    _resolve_dataflow_files,
     _resolve_report_definitions,
     _resolve_semantic_model,
     _visual_usage,
@@ -251,17 +252,13 @@ def _check_power_apps(blob: str) -> tuple[bool, str]:
 # Entry point
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
+    md.take_repo_root_arg(argv if argv is not None else sys.argv[1:])
+    DOCS = md.DOCS
     cfg = configmod.load()
     print("[validate] loading sources for quality-gate checks…")
     model = tmdl.load_model(_resolve_semantic_model(cfg))
     reports = [pbirmod.load_report(rd) for rd in _resolve_report_definitions(cfg)]
-    dataflows_glob = cfg.paths.dataflow_exports
-    dataflows_dir = (
-        (md.REPO_ROOT / dataflows_glob).parent
-        if "*" in dataflows_glob
-        else md.REPO_ROOT / dataflows_glob
-    )
-    dataflows = dfmod.load_dataflows(dataflows_dir)
+    dataflows = dfmod.load_dataflow_files(_resolve_dataflow_files(cfg))
     flows = orcmod.load_flows(cfg.resolve_many(cfg.paths.orchestration_definitions))
     lin = lineagemod.build(
         model, reports[0], dataflows, reports=reports, orchestration_flows=flows

@@ -14,11 +14,12 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import md
 
-# --- Convention paths ------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DOCS = REPO_ROOT / "model-docs"
-CONFIG_PATH = DOCS / ".docgen.toml"
+
+def config_path() -> Path:
+    """Location of the per-repo config, relative to the current repo root."""
+    return md.REPO_ROOT / "model-docs" / ".docgen.toml"
 
 
 # --- Defaults --------------------------------------------------------------
@@ -132,7 +133,7 @@ class Config:
     # Convenience accessors -------------------------------------------------
     def resolve(self, pattern: str) -> list[Path]:
         """Resolve a glob pattern relative to repo root, sorted."""
-        return sorted(REPO_ROOT.glob(pattern))
+        return sorted(md.REPO_ROOT.glob(pattern))
 
     def resolve_many(self, patterns: list[str]) -> list[Path]:
         out: list[Path] = []
@@ -157,7 +158,7 @@ def load(path: Path | None = None) -> Config:
     A missing file produces a default config with empty narratives and the
     convention paths above; the engine then renders neutral placeholders.
     """
-    cfg_path = path or CONFIG_PATH
+    cfg_path = path or config_path()
     if not cfg_path.exists():
         print(f"[config] no .docgen.toml at {cfg_path} — using defaults",
               file=sys.stderr)
@@ -185,7 +186,7 @@ def load(path: Path | None = None) -> Config:
     _df_pattern = paths_t.get("dataflow_exports", _DEFAULT_PATHS["dataflow_exports"])
     _sql_pattern = paths_t.get("sql_exports", _DEFAULT_PATHS["sql_exports"])
     _has_source = bool(
-        list(REPO_ROOT.glob(_df_pattern)) or list(REPO_ROOT.glob(_sql_pattern))
+        list(md.REPO_ROOT.glob(_df_pattern)) or list(md.REPO_ROOT.glob(_sql_pattern))
     )
     _sc_setting = source_code_t.get("enabled", None)
     source_code_enabled = bool(_sc_setting) if _sc_setting is not None else _has_source

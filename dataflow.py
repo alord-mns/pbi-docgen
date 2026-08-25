@@ -185,8 +185,12 @@ def parse_dataflow(path: Path) -> Dataflow:
 def load_dataflows(folder: Path) -> list[Dataflow]:
     if not folder.exists():
         return []
+    return load_dataflow_files(sorted(folder.glob("*.json")))
+
+
+def load_dataflow_files(paths: list[Path]) -> list[Dataflow]:
     out: list[Dataflow] = []
-    for f in sorted(folder.glob("*.json")):
+    for f in paths:
         try:
             out.append(parse_dataflow(f))
         except Exception as exc:  # noqa: BLE001

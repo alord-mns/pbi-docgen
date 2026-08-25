@@ -14,5 +14,7 @@ Modules:
     lineage     — build the end-to-end dependency graph
     doctor      — preflight check for a new repository
     generate    — emit the Markdown card knowledge base
-    validate    — enforce the quality gates in model-docs/documentation_req.md
+    validate    — enforce the quality gates in scripts/docgen/documentation_req.md
 """
+
+__version__ = "1.0.0"

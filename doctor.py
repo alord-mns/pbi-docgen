@@ -20,10 +20,8 @@ from pathlib import Path
 
 from . import config as configmod
 from . import md
+from . import __version__
 from .generate import _resolve_report_definitions
-
-REPO_ROOT = md.REPO_ROOT
-DOCS = md.DOCS
 
 OK = "OK"
 BLOCK = "BLOCKER"
@@ -38,7 +36,7 @@ def _rows_for_paths(cfg: configmod.Config) -> tuple[list[tuple[str, str, str]], 
 
     model_matches = cfg.resolve(cfg.paths.semantic_model_definition)
     if model_matches:
-        detail = f"`{cfg.paths.semantic_model_definition}` -> {model_matches[0].relative_to(REPO_ROOT)}"
+        detail = f"`{cfg.paths.semantic_model_definition}` -> {model_matches[0].relative_to(md.REPO_ROOT)}"
         if len(model_matches) > 1:
             detail += f" (+{len(model_matches) - 1} more; first wins)"
         rows.append(("Semantic model (required)", OK, detail))
@@ -133,6 +131,7 @@ def _rows_for_content(cfg: configmod.Config) -> list[tuple[str, str, str]]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    md.take_repo_root_arg(argv if argv is not None else sys.argv[1:])
     cfg = configmod.load()
 
     rows: list[tuple[str, str, str]] = []
@@ -145,11 +144,19 @@ def main(argv: list[str] | None = None) -> int:
         + ("" if py_ok else " - `tomllib` requires 3.11"),
     ))
 
-    cfg_exists = configmod.CONFIG_PATH.exists()
+    rows.append(("Engine version", OK, f"docgen {__version__}"))
+    rows.append((
+        "Repo root",
+        OK,
+        f"`{md.REPO_ROOT}` (resolved via {md.repo_root_source()})",
+    ))
+
+    cfg_file = configmod.config_path()
+    cfg_exists = cfg_file.exists()
     rows.append((
         "Config file",
         OK if cfg_exists else WARN,
-        f"`{configmod.CONFIG_PATH.relative_to(REPO_ROOT)}`"
+        f"`{cfg_file.relative_to(md.REPO_ROOT)}`"
         + ("" if cfg_exists else " missing - engine would run on defaults with placeholder prose"),
     ))
 

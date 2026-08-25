@@ -160,6 +160,7 @@ holds.
 | `cards.py` | Card model (`Card`, `card_anchor`, `render_bundle`) and the shared `DocContext` |
 | `renderers_*.py` | One renderer per knowledge-base file |
 | `doctor.py` | Preflight check: resolve globs, report what will be emitted |
+| `init.py` | One-time scaffold: detect layout, write a starter `.docgen.toml` |
 | `generate.py` | Orchestrator: load config, parse, render, sweep, log |
 | `validate.py` | Quality-gate runner |
 
@@ -168,7 +169,8 @@ holds.
 From the repo root:
 
 ```powershell
-python -m scripts.docgen.doctor      # optional preflight
+python -m scripts.docgen.init       # one-time scaffold + starter config
+python -m scripts.docgen.doctor     # optional preflight
 python -m scripts.docgen.generate
 python -m scripts.docgen.validate
 ```
@@ -184,7 +186,9 @@ and prints a pass/fail table, exiting non-zero on failure.
 - [`.github/instructions/docgen.instructions.md`](../../.github/instructions/docgen.instructions.md)
   — coding rules for the engine itself (no solution-specific strings,
   idempotency required, read-only over source).
-- [`MIGRATING.md`](../../MIGRATING.md) — porting the engine to another
-  Power BI repository (copy list, config, preflight, troubleshooting).
-- [`model-docs/documentation_req.md`](../../model-docs/documentation_req.md)
+- [`docs/using-docgen.md`](../../docs/using-docgen.md) — installing and using
+  the engine on another Power BI repository.
+- [`docs/maintaining-docgen.md`](../../docs/maintaining-docgen.md) — developing
+  and releasing the engine itself.
+- [`documentation_req.md`](documentation_req.md)
   — the canonical specification of every document the engine produces.

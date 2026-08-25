@@ -32,13 +32,15 @@ from . import renderers_pipeline as rp
 from . import renderers_reports as rr
 from . import renderers_source_code as rsc
 from . import renderers_power_apps as rpa
+from . import renderers_agent as ragent
 
+# Refreshed in main() once --repo-root has been applied.
 REPO_ROOT = md.REPO_ROOT
 DOCS = md.DOCS
 # Plain-text mirror of the agent knowledge base, for agents that cannot ingest
 # Markdown. Kept wholly separate from model-docs/ so it never participates in
 # the docgen validation gates.
-DOCS_TXT = REPO_ROOT / "model-docs-txt"
+DOCS_TXT = md.DOCS_TXT
 
 GENERATION_LOG = "generation-log.md"
 
@@ -133,6 +135,16 @@ def _resolve_report_definitions(cfg: configmod.Config) -> list[Path]:
     return [p for p in included if p.resolve() not in excluded]
 
 
+def _resolve_dataflow_files(cfg: configmod.Config) -> list[Path]:
+    """Dataflow JSON exports. Accepts a glob or a bare directory path."""
+    pattern = cfg.paths.dataflow_exports
+    matches = [p for p in cfg.resolve(pattern) if p.is_file()]
+    if matches:
+        return matches
+    folder = md.REPO_ROOT / pattern
+    return sorted(folder.glob("*.json")) if folder.is_dir() else []
+
+
 def _visual_usage(reports: list) -> dict[str, int]:
     """Count how many visuals reference each measure (by member name)."""
     usage: dict[str, int] = {}
@@ -146,7 +158,9 @@ def _visual_usage(reports: list) -> dict[str, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argv = argv or sys.argv[1:]
+    argv = md.take_repo_root_arg(argv if argv is not None else sys.argv[1:])
+    global REPO_ROOT, DOCS, DOCS_TXT
+    REPO_ROOT, DOCS, DOCS_TXT = md.REPO_ROOT, md.DOCS, md.DOCS_TXT
     cfg = configmod.load()
 
     # ---- Semantic model ----
@@ -179,10 +193,9 @@ def main(argv: list[str] | None = None) -> int:
     primary_report = reports[0]
 
     # ---- Dataflows ----
-    dataflows_glob = cfg.paths.dataflow_exports
-    dataflows_dir = (REPO_ROOT / dataflows_glob).parent if "*" in dataflows_glob else REPO_ROOT / dataflows_glob
-    print(f"[docgen] loading dataflows from {dataflows_dir.relative_to(REPO_ROOT)}")
-    dataflows = dfmod.load_dataflows(dataflows_dir)
+    dataflow_paths = _resolve_dataflow_files(cfg)
+    print(f"[docgen] loading {len(dataflow_paths)} dataflow export(s)")
+    dataflows = dfmod.load_dataflow_files(dataflow_paths)
     print(f"[docgen]   {len(dataflows)} dataflow(s)")
 
     # ---- Orchestration flows ----
@@ -312,6 +325,13 @@ def main(argv: list[str] | None = None) -> int:
         kb_outputs.append(("05-power-apps.md", rpa.render_power_apps(ctx)))
     for filename, text in kb_outputs:
         emit(DOCS / filename, text)
+
+    # System prompt, not a knowledge-base file: deliberately outside kb_outputs
+    # so it gets no plain-text twin and is never uploaded with the cards.
+    emit(
+        DOCS / "agent-instructions.md",
+        ragent.render_agent_instructions(ctx, [f for f, _ in kb_outputs]),
+    )
 
     # ---- Plain-text mirror (for agents that reject Markdown uploads) ----
     # Each KB file is saved verbatim as a .txt under model-docs-txt/, a simple

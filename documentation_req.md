@@ -86,7 +86,7 @@ divided, every card stays self-sufficient, and cross-references resolve across
 all parts. The split keeps each file small enough to chunk cleanly for
 single-chunk retrieval.
 
-**Protected inputs** (never swept, never machine-overwritten): `documentation_req.md`,
+**Protected inputs** under `model-docs/` (never swept, never machine-overwritten):
 `dataflow-references.md`, `.docgen.toml`, `generation-log.md`. Everything else
 under `model-docs/` is regenerated wholesale on every run.
 

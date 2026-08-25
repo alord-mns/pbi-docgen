@@ -1,7 +1,12 @@
 # docgen — Power BI documentation engine
 
 A small, model-agnostic Python engine that generates the contents of
-[`model-docs/`](../../model-docs/) from the repository's source artefacts.
+`model-docs/` from the repository's source artefacts.
+
+> This file ships **inside** the engine package, so it is read from whichever
+> repository has vendored it. Links below therefore point at the
+> [pbi-docgen](https://github.com/alord-mns/pbi-docgen) repository rather than
+> at relative paths, which would not resolve here.
 
 ## What it is — and what it is not
 
@@ -15,7 +20,7 @@ output (after the first run stabilises on-disk).
 | Language | Python 3.11+ (standard library only) |
 | Inputs | TMDL, PBIR, dataflow JSON, orchestration JSON, `.docgen.toml` |
 | Output | Markdown under `model-docs/` |
-| Determinism | Required — enforced by the *idempotency* cardinal rule in [`.github/instructions/docgen.instructions.md`](../../.github/instructions/docgen.instructions.md) |
+| Determinism | Required — enforced by the *idempotency* cardinal rule in [`docgen.instructions.md`](https://github.com/alord-mns/pbi-docgen/blob/main/.github/instructions/docgen.instructions.md) |
 | AI involvement at runtime | **None** |
 
 ## How a run works
@@ -39,7 +44,7 @@ output (after the first run stabilises on-disk).
    existed before the run but was not produced by it is removed
    (protected files are kept by name).
 6. **Generation log** — a one-line entry is prepended to
-   [`model-docs/generation-log.md`](../../model-docs/generation-log.md)
+   `model-docs/generation-log.md` in the repository being documented,
    recording the changed / removed / unchanged counts.
 
 ## Why "regenerate everything, write only what changed"
@@ -105,10 +110,9 @@ can look AI-written when it isn't:
 | Counts, file lists, page tables, lineage diagram nodes | Computed from the parsed source artefacts |
 | `{{PLACEHOLDER}}` / `**Unknown — needs business input**` | Emitted when neither the source nor the config provides a value |
 
-This is by design — cardinal rule #2 in
-[`.github/copilot-instructions.md`](../../.github/copilot-instructions.md)
-is *"never invent business meaning"*, and the docgen-specific rules in
-[`.github/instructions/docgen.instructions.md`](../../.github/instructions/docgen.instructions.md)
+This is by design — the engine never invents business meaning, and the
+docgen coding rules in
+[`docgen.instructions.md`](https://github.com/alord-mns/pbi-docgen/blob/main/.github/instructions/docgen.instructions.md)
 require idempotent, evidence-only generation. If the engine summarised
 with an AI, two runs could produce different prose for the same input,
 the validation gates would be noisy, and any business meaning would be
@@ -118,10 +122,9 @@ a hallucination risk.
 
 Only on the *upstream* side, never inside the engine:
 
-- You can use GitHub Copilot to draft TMDL `description` fields — the
-  [`addMeasureDescriptions`](../../.github/prompts/addMeasureDescriptions.prompt.md)
-  prompt does this. Those descriptions are then committed to the TMDL
-  files and consumed verbatim by the engine.
+- You can use GitHub Copilot to draft TMDL `description` fields. Those
+  descriptions are then committed to the TMDL files and consumed verbatim
+  by the engine.
 - You can use Copilot to draft narrative entries for `.docgen.toml`.
   Same pattern — AI helps you write the source, but the source is
   committed and the engine just renders it.
@@ -181,14 +184,14 @@ and prints a pass/fail table, exiting non-zero on failure.
 
 ## Related documents
 
-- [`.github/prompts/generateDocumentation.prompt.md`](../../.github/prompts/generateDocumentation.prompt.md)
-  — reusable Copilot prompt that drives the engine and triages failures.
-- [`.github/instructions/docgen.instructions.md`](../../.github/instructions/docgen.instructions.md)
-  — coding rules for the engine itself (no solution-specific strings,
-  idempotency required, read-only over source).
-- [`docs/using-docgen.md`](../../docs/using-docgen.md) — installing and using
-  the engine on another Power BI repository.
-- [`docs/maintaining-docgen.md`](../../docs/maintaining-docgen.md) — developing
-  and releasing the engine itself.
 - [`documentation_req.md`](documentation_req.md)
   — the canonical specification of every document the engine produces.
+  Ships alongside this file, so it is always the contract this engine satisfies.
+- [Using docgen](https://github.com/alord-mns/pbi-docgen/blob/main/docs/using-docgen.md)
+  — installing, configuring, running, and publishing the knowledge base.
+- [Maintaining docgen](https://github.com/alord-mns/pbi-docgen/blob/main/docs/maintaining-docgen.md)
+  — developing and releasing the engine itself.
+- [Distribution design](https://github.com/alord-mns/pbi-docgen/blob/main/docs/docgen-distribution-design.md)
+  — why the engine is packaged and delivered this way.
+- [Knowledge-base design](https://github.com/alord-mns/pbi-docgen/blob/main/docs/agent-knowledge-base-design.md)
+  — why the output is shaped the way it is.

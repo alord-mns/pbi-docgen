@@ -76,11 +76,19 @@ def _detect(root: Path) -> dict[str, object]:
         # The exclusion glob must track wherever the model actually lives, or the
         # PBIP's embedded development report gets documented as a thin report.
         found["excluded_report_definitions"] = [f"{first}/*.Report/definition"]
-    # A .Report inside the semantic-model folder is the PBIP's embedded
-    # development report, which is excluded from documentation by convention.
+
+    # Two solution shapes. Where reports sit *outside* the semantic-model folder
+    # they are thin reports and the model-attached one is a development artefact.
+    # Where the model-attached report is the *only* report it is the deliverable,
+    # so it must not be excluded or there would be nothing left to document.
     thin = sorted({p for p in report_parents if p not in set(model_parents)})
     if thin:
         found["thin_report_definitions"] = [f"{p}/*.Report/definition" for p in thin]
+    elif report_parents:
+        found["thin_report_definitions"] = [
+            f"{p}/*.Report/definition" for p in sorted(set(report_parents))
+        ]
+        found["excluded_report_definitions"] = []
 
     # Distinctive filenames only — never guess which loose *.json are dataflows.
     for key, pattern, builder in (

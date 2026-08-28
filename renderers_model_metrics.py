@@ -356,7 +356,25 @@ def render_table_card(ctx: DocContext, table) -> cards.Card:
         if table.is_calculated:
             parts.append("_Calculated table (defined in DAX); no external source._")
         else:
-            parts.append("_No external dataflow / SQL source resolved._")
+            # Distinguish "the engine could not trace this" from "there is no
+            # source" — the two look identical otherwise, and the first reads as
+            # a gap in the solution rather than a limit of the tool.
+            facts: list[str] = []
+            kinds = sorted({p.source_kind for p in table.partitions if p.source_kind})
+            modes = sorted({p.mode for p in table.partitions if p.mode})
+            if kinds:
+                facts.append("partition source " + ", ".join(f"`{k}`" for k in kinds))
+            if modes:
+                facts.append("mode " + ", ".join(f"`{m}`" for m in modes))
+            detail = f" ({'; '.join(facts)})" if facts else ""
+            parts.append(
+                f"_Source not traced{detail}. The engine resolves upstream sources "
+                "through dataflow entities and exported SQL views. This table is fed "
+                "by something else \u2014 for example another semantic model, a direct "
+                "database connection, or an inline source the engine does not parse. "
+                "That is a limit of the trace, not evidence that the table has no "
+                "source._"
+            )
 
     # Columns with source mapping.
     if table.columns:

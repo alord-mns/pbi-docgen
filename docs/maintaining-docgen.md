@@ -3,52 +3,59 @@
 For whoever develops the documentation engine itself. If you only want to *use*
 docgen on a solution, read [`using-docgen.md`](using-docgen.md) instead.
 
-> **Status.** The engine currently lives inside this repo at
-> [`scripts/docgen/`](../scripts/docgen/). It is destined to move to a standalone
-> `pbi-docgen` repository — see [Split-day runbook](#split-day-runbook). This
-> guide is written for the post-split world and moves with the engine unchanged;
-> the design reasoning behind it is in
-> [`docgen-distribution-design.md`](docgen-distribution-design.md).
+The design reasoning behind how the engine is packaged and delivered is in
+[`docgen-distribution-design.md`](docgen-distribution-design.md); the reasoning
+behind the shape of its output is in
+[`agent-knowledge-base-design.md`](agent-knowledge-base-design.md).
 
 ---
 
-## 1. Clone layout
+## 1. What you need locally
+
+Two things: this repository, and **any Power BI solution repository to test
+against**. The engine contains no Power BI source of its own, so you cannot
+exercise a change without pointing it at a real solution.
 
 ```
-c:\dev\pbi-docgen\          engine repo — you edit here (git at the root)
-c:\dev\pbi-dev\fhb-weekly\  a real solution — your integration test bed
+C:\dev\pbi-docgen\      this repo — you edit here
+C:\dev\my-solution\     any repo with a Power BI solution in it
 ```
 
-The engine repo mirrors the consumer layout, so the package sits at
-`pbi-docgen\scripts\docgen\`. That means git is at the workspace root (VS Code
-behaves normally) **and** the run command is byte-identical to a consumer's.
+Use whichever solution you have access to; the paths above are only an example.
+A large, messy, real model is far more useful than a small tidy one, because
+that is where renderer and parser bugs actually surface.
 
-The outer folder name is irrelevant — Python only ever sees `scripts.docgen`.
+The package sits at `pbi-docgen\scripts\docgen\`, mirroring where consumers
+vendor it. That keeps git at the workspace root (so VS Code behaves normally)
+**and** makes the run command identical to a consumer's. The outer folder name
+is irrelevant — Python only ever sees `scripts.docgen`.
 
 ---
 
 ## 2. The development loop
 
-The engine no longer has to live inside the solution it documents. Point it at
+The engine does not have to live inside the solution it documents. Point it at
 one with `--repo-root`:
 
 ```powershell
-Set-Location c:\dev\pbi-docgen
+Set-Location C:\dev\pbi-docgen
 # edit scripts\docgen\renderers_reports.py
-python -m scripts.docgen.doctor   --repo-root c:\dev\pbi-dev\fhb-weekly
-python -m scripts.docgen.generate --repo-root c:\dev\pbi-dev\fhb-weekly
-python -m scripts.docgen.validate --repo-root c:\dev\pbi-dev\fhb-weekly
+python -m scripts.docgen.doctor   --repo-root C:\dev\my-solution
+python -m scripts.docgen.generate --repo-root C:\dev\my-solution
+python -m scripts.docgen.validate --repo-root C:\dev\my-solution
 ```
 
-Nothing is copied. Code in `pbi-docgen` writes docs into `fhb-weekly`.
+Nothing is copied. Code here writes documentation into the solution repo. This
+is how you test a change *before* releasing it — the alternative would be
+editing a consumer's vendored copy, which the next `subtree pull` would discard.
 
 Two things to know:
 
-- **This dirties the solution repo.** You are regenerating its docs with
-  unreleased code. Run `git checkout model-docs model-docs-txt` in fhb-weekly to
-  discard, or leave them until you release.
-- **Running the engine against its own repo will report `BLOCKER`.** That is
-  correct — the engine repo contains no solution. Always pass `--repo-root`.
+- **This modifies the solution repo.** You are regenerating its documentation
+  with unreleased code. Run `git checkout model-docs model-docs-txt` there to
+  discard, or leave the changes until you release.
+- **Running the engine against this repo will report `BLOCKER`.** That is
+  correct — there is no Power BI solution here. Always pass `--repo-root`.
 
 `--repo-root` beats the `DOCGEN_REPO_ROOT` environment variable, which in turn
 beats automatic detection. See [§6](#6-how-the-repo-root-is-found).
@@ -69,35 +76,42 @@ Consumers vendor the engine with `git subtree`, which pulls from a **flattened
 not update itself — publishing it is the release.
 
 ```powershell
-Set-Location c:\dev\pbi-docgen
+Set-Location C:\dev\pbi-docgen
 
 # 1. Bump the version
 #    scripts\docgen\__init__.py  ->  __version__ = "1.1.0"
 git commit -am "Release 1.1.0"
 git push
 
-# 2. Publish the flattened payload consumers subtree-pull from
+# 2. Publish the flattened payload consumers subtree-pull from.
+#    Delete any local `dist` first: `subtree split` refuses to overwrite a
+#    branch that already exists, so this fails on every release after the first.
+git branch -D dist
 git subtree split --prefix=scripts/docgen -b dist
-git push origin dist --force
+git push origin dist
 
 # 3. Tag it
 git tag v1.1.0
 git push origin v1.1.0
 
-# 4. Dogfood: update this repo's own vendored copy the way a consumer would
-Set-Location c:\dev\pbi-dev\fhb-weekly
-git subtree pull --prefix scripts/docgen https://github.com/<org>/pbi-docgen dist --squash
+# 4. Prove the release by installing it the way a consumer does
+Set-Location C:\dev\my-solution
+git subtree pull --prefix scripts/docgen https://github.com/alord-mns/pbi-docgen dist --squash
 python -m scripts.docgen.generate
 python -m scripts.docgen.validate
 ```
 
 **Forgetting step 2 is the classic failure** — `main` moves, `dist` doesn't, and
 every consumer silently stays on the old engine with no error to tell them.
-Step 4 catches it, which is exactly why fhb-weekly consumes the engine through
-the same mechanism as everyone else.
+Step 4 is what catches it: by installing your own release through the same
+mechanism everyone else uses, you find a broken release before they do.
 
-`git subtree split` re-derives the branch from history, so `--force` on the push
-is expected and safe.
+`git subtree split` is deterministic, so re-deriving `dist` reproduces the
+previous commits identically and appends the new ones. A plain `git push` is
+therefore a fast-forward and needs no `--force`. If git rejects the push,
+something genuinely unexpected has happened — someone else published to `dist`,
+or `main`'s history was rewritten. Investigate rather than forcing; if you are
+certain, use `--force-with-lease`, never a bare `--force`.
 
 ---
 
@@ -121,14 +135,16 @@ anything needed *after* installing ships inside it.
 
 ### Deliberately not part of the engine
 
-- **`generateDocumentation` prompt** — retired. It wrapped two commands, assumed
-  GitHub Copilot specifically, and `doctor` now covers the preflight
-  deterministically. It had already drifted out of date.
-- **`addMeasureDescriptions` prompt** — belongs with the health / authoring
-  toolchain, not here: it *writes* to TMDL, and docgen is strictly read-only
-  over source. Running it before first generating docs is a sensible workflow,
-  but it is a separate one.
-- **`pbi_health` / `pbi_repair`** — see Decision 12 in the distribution design.
+- **Copilot prompts and chat instructions.** Wrappers around `generate` /
+  `validate` are specific to one AI tool, duplicate what `doctor` already does
+  deterministically, and drift out of date. A consumer who wants them can keep
+  their own.
+- **Anything that writes to Power BI source.** Backfilling TMDL descriptions,
+  for example, improves documentation quality a great deal — but docgen is
+  strictly read-only over source, so tooling that edits it belongs elsewhere.
+  Running it before generating is a sensible workflow; it is a separate one.
+- **Health-check and repair engines** — see Decision 12 in the distribution
+  design for why these ship separately.
 
 ---
 
@@ -165,52 +181,3 @@ first whenever paths look wrong.
 Because of this, the engine works at any depth. `scripts/docgen/` is the
 documented convention purely so every instruction reads
 `python -m scripts.docgen.generate`, not because the code requires it.
-
----
-
-## Split-day runbook
-
-One-time migration of the engine out of this repo. Preserves engine history.
-
-```powershell
-# 1. Extract the engine's own history into a branch
-Set-Location c:\dev\pbi-dev\fhb-weekly
-git subtree split --prefix=scripts/docgen -b docgen-only
-
-# 2. Create an empty `pbi-docgen` repo in the org, then seed it.
-#    The split branch has the package at its ROOT, which is exactly the `dist`
-#    shape, so push it to `dist`. `main` gets the mirror layout added on top.
-git push https://github.com/<org>/pbi-docgen docgen-only:dist
-
-# 3. Clone it and build out the mirror layout on `main`:
-#      scripts/docgen/**            (the package)
-#      docs/using-docgen.md         (the consumer guide)
-#      docs/maintaining-docgen.md   (this file)
-#      docs/docgen-distribution-design.md
-#      docs/agent-knowledge-base-design.md
-#      README.md                    (new — see below)
-#      .github/instructions/docgen.instructions.md
-
-# 4. Re-attach this repo as a subtree consumer.
-#    `subtree add` REFUSES if the prefix already exists, so remove it first.
-Set-Location c:\dev\pbi-dev\fhb-weekly
-git rm -r scripts/docgen
-git commit -m "Replace vendored docgen with subtree"
-git subtree add --prefix scripts/docgen https://github.com/<org>/pbi-docgen dist --squash
-
-# 5. Prove nothing moved
-python -m scripts.docgen.generate
-python -m scripts.docgen.validate
-```
-
-### The root `README.md` to write at step 3
-
-It cannot be drafted here, because this repo's root README belongs to the
-solution. It should carry:
-
-- One line on what docgen is and what it produces.
-- A quickstart: the `git subtree add` command, then `doctor`, then `generate`.
-- The engine's guarantees — deterministic, read-only over source, stdlib only,
-  Python 3.11+.
-- Links to `docs/using-docgen.md` (consumers), `docs/maintaining-docgen.md`
-  (maintainers), and `docs/docgen-distribution-design.md` (why it is like this).

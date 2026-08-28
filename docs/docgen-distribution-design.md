@@ -20,8 +20,9 @@ Three facts about the environment drove most of what follows:
 1. **The organisation mandates its own default template for new repositories**,
    and we have no admin rights over org-level GitHub settings.
 2. **PowerShell script execution is locked down** on developer machines.
-3. **This repo contains confidential business content** — dataflow exports, a
-   2,100-measure model, SQL view definitions, SharePoint URLs, workspace GUIDs.
+3. **The solution repository the engine grew up in contains confidential
+   business content** — dataflow exports, a 2,100-measure model, SQL view
+   definitions, SharePoint URLs, workspace GUIDs.
 
 Any distribution mechanism requiring admin rights, shell scripts, or "clone my
 solution repo and delete the parts you don't need" was out before we started.
@@ -30,13 +31,14 @@ solution repo and delete the parts you don't need" was out before we started.
 
 ## Decision 1 — the engine becomes its own repository
 
-The engine was built inside `fhb-weekly` and is model-agnostic by construction:
-no solution-specific logic, all naming in `model-docs/.docgen.toml`. But it was
-only *obtainable* by cloning a solution repo.
+The engine was built inside a solution repository (`fhb-weekly`) and is
+model-agnostic by construction: no solution-specific logic, all naming in
+`model-docs/.docgen.toml`. But it was only *obtainable* by cloning that repo.
 
-That fails constraint 3. Handing a colleague this repo to extract `scripts/docgen/`
-also hands them every dataflow and SQL view in it. A separate `pbi-docgen` repo
-is therefore a confidentiality requirement, not a tidiness preference.
+That fails constraint 3. Handing a colleague an entire solution repo so they can
+extract `scripts/docgen/` also hands them every dataflow and SQL view in it. A
+separate `pbi-docgen` repo is therefore a confidentiality requirement, not a
+tidiness preference.
 
 ## Decision 2 — not a GitHub template repository
 
@@ -99,8 +101,8 @@ git push origin dist --force
 
 Cost is one extra command per release. The risk is forgetting it — `main` moves,
 `dist` doesn't, and consumers silently stay on the old engine — which is why the
-release checklist ends by updating this repo through the same subtree pull a
-consumer would use.
+release checklist ends by installing the release into a solution repo through
+the same subtree pull a consumer would use.
 
 > **A superseded constraint, recorded so it isn't reintroduced.** An earlier
 > version of this design put the package at the repo root and required the
@@ -169,12 +171,12 @@ keeps the date of its last *content* change. The banner effectively means "last
 changed" rather than "last generated", and different files legitimately show
 different dates. `generation-log.md` retains the true per-run audit trail.
 
-## Decision 11 — fhb-weekly becomes consumer #1
+## Decision 11 — the originating solution becomes consumer #1
 
-Rather than keeping a privileged copy, this repo vendors the engine by subtree
-like everyone else. Its docs are regenerated through the same command a consumer
-runs, so the distribution path is exercised on every release instead of rotting
-untested.
+Rather than keeping a privileged copy, the solution the engine was built in
+(`fhb-weekly`) vendors it by subtree like everyone else. Its documentation is
+regenerated through the same command any consumer runs, so the distribution path
+is exercised on every release instead of rotting untested.
 
 ## Decision 12 — `pbi_health` and `pbi_repair` are not bundled
 

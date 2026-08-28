@@ -116,11 +116,26 @@ The engine discovers everything by glob. Defaults live in
 
 Two rules follow from this table:
 
-- **A semantic model and at least one thin report are mandatory.** The engine
+- **A semantic model and at least one report are mandatory.** The engine
   exits with a clear message if either glob matches nothing.
 - **Everything else is presence-driven.** No dataflows, no SQL, no flows, no
   apps? Those sections are simply omitted — there is no flag to set, and no
   gate will demand them.
+
+### Which report gets documented
+
+Power BI solutions come in two shapes, and the difference decides what
+`excluded_report_definitions` should be. `init` detects which one you have and
+writes the config accordingly, so you normally need not think about it.
+
+| Shape | Reports documented | Exclusion |
+|---|---|---|
+| **Thin reports** — one or more reports live-connected to a published model, plus the report inside the PBIP | The thin reports | The model-attached report, which is a development artefact |
+| **Single report** — the report attached to the semantic model is the whole solution | That report | None — excluding it would leave nothing to document |
+
+If you configure this by hand and get it wrong, the symptom is a build failure
+saying every matched report was excluded. `doctor` names that cause explicitly
+rather than reporting a glob that matched nothing.
 
 Match the SQL export filenames to the Databricks view / table names they define
 (`sql/fact_orders.sql` for view `fact_orders`). That filename **is** the join

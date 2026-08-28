@@ -178,6 +178,13 @@ def main(argv: list[str] | None = None) -> int:
     # ---- Reports (one or many) ----
     report_defs = _resolve_report_definitions(cfg)
     if not report_defs:
+        if cfg.resolve_many(cfg.paths.thin_report_definitions):
+            raise SystemExit(
+                "[docgen] every matched report was removed by "
+                "`paths.excluded_report_definitions` — if the report attached to the "
+                "semantic model is your deliverable, clear that exclusion in "
+                "model-docs/.docgen.toml"
+            )
         raise SystemExit(
             "[docgen] no report definitions matched — check `paths.thin_report_definitions` in model-docs/.docgen.toml"
         )

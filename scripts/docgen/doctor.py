@@ -58,12 +58,21 @@ def _rows_for_paths(cfg: configmod.Config) -> tuple[list[tuple[str, str, str]], 
         ))
     else:
         blocked = True
-        rows.append((
-            "Thin reports (required)",
-            BLOCK,
-            f"nothing matched `{', '.join(cfg.paths.thin_report_definitions)}` "
-            "- set `[paths] thin_report_definitions`",
-        ))
+        # "Matched but all excluded" and "matched nothing" need different fixes.
+        matched = cfg.resolve_many(cfg.paths.thin_report_definitions)
+        if matched:
+            detail = (
+                f"{len(matched)} report(s) matched but ALL were removed by "
+                "`[paths] excluded_report_definitions`. If the report attached to "
+                "the semantic model is your deliverable rather than a development "
+                "artefact, clear that exclusion."
+            )
+        else:
+            detail = (
+                f"nothing matched `{', '.join(cfg.paths.thin_report_definitions)}` "
+                "- set `[paths] thin_report_definitions`"
+            )
+        rows.append(("Thin reports (required)", BLOCK, detail))
 
     optional: list[tuple[str, list[Path], str]] = [
         ("Dataflow exports", cfg.resolve(cfg.paths.dataflow_exports), cfg.paths.dataflow_exports),

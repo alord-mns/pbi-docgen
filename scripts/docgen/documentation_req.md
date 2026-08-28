@@ -43,8 +43,8 @@ claim.
 
 | Artefact | Location | Used for |
 |---|---|---|
-| Semantic model (TMDL) | `src/semantic-model/**/definition/` | tables, columns, measures, relationships, roles |
-| Thin reports (PBIR) | `src/thin-reports/**/definition/` | pages, visuals, slicers, filters, field bindings |
+| Semantic model (TMDL) | `pbi/semantic-model/**/definition/` | tables, columns, measures, relationships, roles |
+| Thin reports (PBIR) | `pbi/thin-reports/**/definition/` | pages, visuals, slicers, filters, field bindings |
 | Dataflows (JSON) | `dataflows/*.json` | entities, Power Query, Databricks navigation |
 | SQL exports | `sql/*.sql` | physical column derivations and row scope (`WHERE` / `HAVING` filters) (`CREATE VIEW`) |
 | Orchestration (JSON) | `orchestration/**` | triggers, refresh targets, notifications |
@@ -52,8 +52,8 @@ claim.
 | Per-repo content | `model-docs/.docgen.toml` | narratives, acronyms, data-source descriptions, workspace IDs, measure-role prefixes, SQL overrides |
 
 **Report scope.** The embedded report inside the `.pbip` project
-(`src/semantic-model/**/*.Report/`) is development-only and is **excluded** via
-`[paths].excluded_report_definitions`. Only `src/thin-reports/` reports are in
+(`pbi/semantic-model/**/*.Report/`) is development-only and is **excluded** via
+`[paths].excluded_report_definitions`. Only `pbi/thin-reports/` reports are in
 scope.
 
 The engine is **strictly read-only** over all source artefacts.

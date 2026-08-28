@@ -1,7 +1,7 @@
 """TMDL parser for Power BI semantic models.
 
 Parses the tab-indented TMDL format under
-``src/semantic-model/<name>.SemanticModel/definition/`` into plain
+``pbi/semantic-model/<name>.SemanticModel/definition/`` into plain
 dataclasses suitable for rendering Markdown documentation.
 
 The parser is intentionally tolerant: it handles the common TMDL constructs

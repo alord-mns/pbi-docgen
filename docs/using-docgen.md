@@ -36,13 +36,25 @@ Run this **inside your existing solution repo** — there is nothing to create,
 and nothing to delete afterwards:
 
 ```powershell
-git subtree add --prefix scripts/docgen https://github.com/<org>/pbi-docgen dist --squash
+git subtree add --prefix scripts/docgen https://github.com/alord-mns/pbi-docgen dist --squash
 ```
+
+> **Brand-new repository?** `git subtree add` needs at least one commit to exist
+> first. On a repo with no commits it fails with a misleading pair of errors:
+>
+> ```
+> fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+> fatal: working tree has modifications.  Cannot add.
+> ```
+>
+> Nothing is actually modified — there is simply no `HEAD` yet for subtree to
+> compare against. Make any commit (`git commit --allow-empty -m "Initial commit"`
+> will do) and re-run. You do not need to push first.
 
 That vendors the engine into `scripts/docgen/`. Later, to pick up a new release:
 
 ```powershell
-git subtree pull --prefix scripts/docgen https://github.com/<org>/pbi-docgen dist --squash
+git subtree pull --prefix scripts/docgen https://github.com/alord-mns/pbi-docgen dist --squash
 ```
 
 `--squash` keeps each update to a single commit rather than importing the
@@ -94,9 +106,9 @@ The engine discovers everything by glob. Defaults live in
 
 | Artefact | Default glob | Required |
 |---|---|---|
-| Semantic model (TMDL) | `src/semantic-model/*.SemanticModel/definition` | **Yes** |
-| Thin reports (PBIR) | `src/thin-reports/*.Report/definition` | **Yes** |
-| Reports excluded from docs | `src/semantic-model/*.Report/definition` | — |
+| Semantic model (TMDL) | `pbi/semantic-model/*.SemanticModel/definition` | **Yes** |
+| Thin reports (PBIR) | `pbi/thin-reports/*.Report/definition` | **Yes** |
+| Reports excluded from docs | `pbi/semantic-model/*.Report/definition` | — |
 | Dataflow JSON exports | `dataflows/*.json` | No |
 | SQL view exports | `sql/*.sql` | No |
 | Orchestration workflow JSON | `orchestration/**/definition.json` | No |
@@ -144,6 +156,10 @@ differ from the defaults, the generated `[paths]` block points at where your
 files actually are rather than imposing this engine's folder names. Folders are
 only scaffolded for a genuinely empty repo, and it also adds the `__pycache__/`
 and `*.msapp` entries to `.gitignore`.
+
+The `[paths]` block is always written out in full, even where it matches the
+engine defaults. That is deliberate: your layout is pinned in your own config,
+so a future engine release cannot move it out from under you.
 
 `init` is **non-destructive and safe to re-run**. It never modifies anything that
 already exists — above all an existing `.docgen.toml`, which is your own

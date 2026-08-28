@@ -24,9 +24,9 @@ def config_path() -> Path:
 
 # --- Defaults --------------------------------------------------------------
 _DEFAULT_PATHS = {
-    "semantic_model_definition": "src/semantic-model/*.SemanticModel/definition",
-    "thin_report_definitions": ["src/thin-reports/*.Report/definition"],
-    "excluded_report_definitions": ["src/semantic-model/*.Report/definition"],
+    "semantic_model_definition": "pbi/semantic-model/*.SemanticModel/definition",
+    "thin_report_definitions": ["pbi/thin-reports/*.Report/definition"],
+    "excluded_report_definitions": ["pbi/semantic-model/*.Report/definition"],
     "dataflow_exports": "dataflows/*.json",
     "orchestration_definitions": ["orchestration/**/definition.json"],
     "power_apps_definitions": ["power-apps/**/CanvasManifest.json"],

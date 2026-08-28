@@ -126,6 +126,8 @@ class Config:
     data_sources: list[DataSource] = field(default_factory=list)
     report_purposes: dict[str, str] = field(default_factory=dict)
     powerbi_app: PowerBiApp = field(default_factory=PowerBiApp)
+    # None = decide from `excluded_report_definitions`; True/False = explicit.
+    include_model_attached_report: bool | None = None
     measures: MeasureRules = field(default_factory=MeasureRules)
     source_code_enabled: bool = False
     raw: dict = field(default_factory=dict)
@@ -180,6 +182,9 @@ def load(path: Path | None = None) -> Config:
     reports_t = data.get("reports", {}) or {}
     measures_t = data.get("measures", {}) or {}
     source_code_t = data.get("source_code", {}) or {}
+    report_scope_t = data.get("report_scope", {}) or {}
+    _incl = report_scope_t.get("include_model_attached_report", None)
+    include_model_attached_report = None if _incl is None else bool(_incl)
     # Source-code cards are presence-driven: emitted whenever there is source to
     # document (dataflows and/or SQL exports). An explicit `enabled = false`
     # opt-out still forces them off (raw SQL can be sensitive in some repos).
@@ -266,6 +271,7 @@ def load(path: Path | None = None) -> Config:
         ],
         report_purposes={str(k): str(v) for k, v in reports_t.items()},
         source_code_enabled=source_code_enabled,
+        include_model_attached_report=include_model_attached_report,
         raw=data,
     )
     return cfg

@@ -86,6 +86,7 @@ git push
 # 2. Publish the flattened payload consumers subtree-pull from.
 #    Delete any local `dist` first: `subtree split` refuses to overwrite a
 #    branch that already exists, so this fails on every release after the first.
+#    Harmless if it reports "branch 'dist' not found" — you have not split here yet.
 git branch -D dist
 git subtree split --prefix=scripts/docgen -b dist
 git push origin dist

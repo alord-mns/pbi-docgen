@@ -78,17 +78,19 @@ def _detect(root: Path) -> dict[str, object]:
         found["excluded_report_definitions"] = [f"{first}/*.Report/definition"]
 
     # Two solution shapes. Where reports sit *outside* the semantic-model folder
-    # they are thin reports and the model-attached one is a development artefact.
-    # Where the model-attached report is the *only* report it is the deliverable,
-    # so it must not be excluded or there would be nothing left to document.
+    # the model-attached one is usually a development artefact; where it is the
+    # only report it must be the deliverable. Both are only a starting guess —
+    # `[report_scope]` in the generated config is where the user states the truth.
     thin = sorted({p for p in report_parents if p not in set(model_parents)})
     if thin:
         found["thin_report_definitions"] = [f"{p}/*.Report/definition" for p in thin]
+        found["_include_model_attached_report"] = False
     elif report_parents:
         found["thin_report_definitions"] = [
             f"{p}/*.Report/definition" for p in sorted(set(report_parents))
         ]
         found["excluded_report_definitions"] = []
+        found["_include_model_attached_report"] = True
 
     # Distinctive filenames only — never guess which loose *.json are dataflows.
     for key, pattern, builder in (
@@ -177,6 +179,15 @@ dataset = ""   # where the semantic model lives, if different
 secondary = []
 
 {_paths_block(detected)}
+[report_scope]
+# Is the report attached to the semantic model a real, user-facing report, or a
+# development artefact you don't want documented? Only you know — the value
+# below is a guess based on your layout, so correct it if it is wrong.
+#   true  - document it alongside any thin reports
+#   false - skip it
+# This overrides `excluded_report_definitions` for that report only.
+include_model_attached_report = {str(detected.get("_include_model_attached_report", False)).lower()}
+
 [measures]
 # Naming conventions used to classify measures. BOTH ARE OPTIONAL.
 # selector_prefixes: picker / slicer-driver measures. Leave empty if this model

@@ -129,9 +129,27 @@ def _resolve_semantic_model(cfg: configmod.Config) -> Path:
     return matches[0]
 
 
+def _model_attached_report_glob(cfg: configmod.Config) -> str:
+    """Where the PBIP's own report sits, derived from the semantic-model glob."""
+    return cfg.paths.semantic_model_definition.replace(".SemanticModel/", ".Report/")
+
+
 def _resolve_report_definitions(cfg: configmod.Config) -> list[Path]:
     included = cfg.resolve_many(cfg.paths.thin_report_definitions)
     excluded = {p.resolve() for p in cfg.resolve_many(cfg.paths.excluded_report_definitions)}
+
+    # `[report_scope] include_model_attached_report` is an explicit statement of
+    # intent and overrides the exclusion globs for that report only.
+    flag = cfg.include_model_attached_report
+    if flag is not None:
+        model_reports = cfg.resolve_many([_model_attached_report_glob(cfg)])
+        if flag:
+            excluded -= {p.resolve() for p in model_reports}
+            known = {p.resolve() for p in included}
+            included += [p for p in model_reports if p.resolve() not in known]
+        else:
+            excluded |= {p.resolve() for p in model_reports}
+
     return [p for p in included if p.resolve() not in excluded]
 
 

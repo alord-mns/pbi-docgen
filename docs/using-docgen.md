@@ -124,14 +124,23 @@ Two rules follow from this table:
 
 ### Which report gets documented
 
-Power BI solutions come in two shapes, and the difference decides what
-`excluded_report_definitions` should be. `init` detects which one you have and
-writes the config accordingly, so you normally need not think about it.
+Whether the report attached to the semantic model should be documented is a
+question only you can answer — it may be a genuine user-facing report, or a
+development artefact left in the PBIP. Declare it:
 
-| Shape | Reports documented | Exclusion |
-|---|---|---|
-| **Thin reports** — one or more reports live-connected to a published model, plus the report inside the PBIP | The thin reports | The model-attached report, which is a development artefact |
-| **Single report** — the report attached to the semantic model is the whole solution | That report | None — excluding it would leave nothing to document |
+```toml
+[report_scope]
+include_model_attached_report = true   # or false
+```
+
+`init` writes a starting value by looking at your layout: `false` when separate
+thin reports exist, `true` when the model-attached report is the only one. Both
+are guesses. **Correct it if it is wrong** — a solution can perfectly well have
+thin reports *and* a user-facing report attached to the model, and no amount of
+folder inspection can tell that apart from a leftover development report.
+
+The flag overrides `excluded_report_definitions` for that report only, so you can
+still use the exclusion globs to drop other reports.
 
 If you configure this by hand and get it wrong, the symptom is a build failure
 saying every matched report was excluded. `doctor` names that cause explicitly

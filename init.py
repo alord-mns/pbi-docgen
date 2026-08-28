@@ -30,8 +30,8 @@ _SKIP_DIRS = {
 }
 
 _SCAFFOLD_DIRS = [
-    "src/semantic-model",
-    "src/thin-reports",
+    "pbi/semantic-model",
+    "pbi/thin-reports",
     "dataflows",
     "sql",
     "orchestration",
@@ -73,6 +73,9 @@ def _detect(root: Path) -> dict[str, object]:
     if model_parents:
         first = sorted(set(model_parents))[0]
         found["semantic_model_definition"] = f"{first}/*.SemanticModel/definition"
+        # The exclusion glob must track wherever the model actually lives, or the
+        # PBIP's embedded development report gets documented as a thin report.
+        found["excluded_report_definitions"] = [f"{first}/*.Report/definition"]
     # A .Report inside the semantic-model folder is the PBIP's embedded
     # development report, which is excluded from documentation by convention.
     thin = sorted({p for p in report_parents if p not in set(model_parents)})
@@ -102,39 +105,37 @@ def _detect(root: Path) -> dict[str, object]:
 
 
 def _paths_block(detected: dict[str, object]) -> str:
-    """Emit a [paths] block only when the layout differs from the defaults."""
+    """Emit a fully-populated [paths] block.
+
+    Written out in full even when it matches the engine defaults, so a repo
+    never silently depends on a default that a later engine release might change.
+    """
     from .config import _DEFAULT_PATHS
 
     lines: list[str] = []
     for key in (
         "semantic_model_definition",
         "thin_report_definitions",
+        "excluded_report_definitions",
+        "dataflow_exports",
         "sql_exports",
         "orchestration_definitions",
         "power_apps_definitions",
     ):
-        value = detected.get(key)
-        if value is None or value == _DEFAULT_PATHS.get(key):
-            continue
+        value = detected.get(key, _DEFAULT_PATHS.get(key))
         rendered = (
             '"' + str(value) + '"' if isinstance(value, str)
             else "[" + ", ".join(f'"{v}"' for v in value) + "]"
         )
         lines.append(f"{key} = {rendered}")
 
-    if not lines:
-        return (
-            "# [paths]\n"
-            "# Your layout matches the engine defaults, so no overrides are needed.\n"
-            "# Override any of these if you move things later:\n"
-            "#   semantic_model_definition, thin_report_definitions,\n"
-            "#   excluded_report_definitions, dataflow_exports, sql_exports,\n"
-            "#   orchestration_definitions, power_apps_definitions\n"
-        )
     body = "\n".join(lines)
     return (
         "[paths]\n"
-        "# Detected from your existing layout. Every glob is relative to the repo root.\n"
+        "# Where your artefacts live. Detected from this repo where possible,\n"
+        "# otherwise the engine defaults. Every glob is relative to the repo root.\n"
+        "# These are written out in full deliberately: pinning them here means a\n"
+        "# future engine release cannot move your layout out from under you.\n"
         f"{body}\n"
     )
 

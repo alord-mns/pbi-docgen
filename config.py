@@ -30,6 +30,7 @@ _DEFAULT_PATHS = {
     "dataflow_exports": "dataflows/*.json",
     "orchestration_definitions": ["orchestration/**/definition.json"],
     "power_apps_definitions": ["power-apps/**/CanvasManifest.json"],
+    "powerbi_app_definition": "pbi/powerbi-app/*.json",
     "sql_exports": "sql/*.sql",
 }
 
@@ -78,6 +79,7 @@ class Paths:
     power_apps_definitions: list[str] = field(
         default_factory=lambda: list(_DEFAULT_PATHS["power_apps_definitions"])
     )
+    powerbi_app_definition: str = _DEFAULT_PATHS["powerbi_app_definition"]
     sql_exports: str = _DEFAULT_PATHS["sql_exports"]
 
 
@@ -239,6 +241,9 @@ def load(path: Path | None = None) -> Config:
                     "power_apps_definitions",
                     _DEFAULT_PATHS["power_apps_definitions"],
                 )
+            ),
+            powerbi_app_definition=paths_t.get(
+                "powerbi_app_definition", _DEFAULT_PATHS["powerbi_app_definition"]
             ),
             sql_exports=paths_t.get("sql_exports", _DEFAULT_PATHS["sql_exports"]),
         ),

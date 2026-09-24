@@ -49,6 +49,7 @@ claim.
 | SQL exports | `sql/*.sql` | physical column derivations and row scope (`WHERE` / `HAVING` filters) (`CREATE VIEW`) |
 | Orchestration (JSON) | `orchestration/**` | triggers, refresh targets, notifications |
 | Canvas Power Apps (unpacked) | `power-apps/**/CanvasManifest.json` (+ sibling `Src/`, `Connections/`, `DataSources/`) | app metadata, screens, connectors, read/write data sources |
+| Power BI App metadata export | `pbi/powerbi-app/*.json` | distribution App name, workspace, published reports (out-of-band REST / Power Automate export) |
 | Per-repo content | `model-docs/.docgen.toml` | narratives, acronyms, data-source descriptions, workspace IDs, measure-role prefixes, SQL overrides |
 
 **Report scope.** The embedded report inside the `.pbip` project
@@ -122,6 +123,7 @@ Every card renders as:
 | Data source | Connection mechanism, host, freshness (credentials never recorded) |
 | Dataflow | Output entities → Databricks views (or inline native SQL query targets); **Linked dataflows** (entities sourced from another dataflow via `PowerPlatform.Dataflows`, listed with dataflow / workspace IDs, when present, with an ambiguity note when a referenced entity name is produced by more than one dataflow); **Row filters / exclusions** (backing-view / native-query `WHERE` / `HAVING`, static vs dynamic); **Downstream impact** (model tables → measures → report pages). Connectors may include native-database markers (e.g. `DB2.Database`) and a `Native SQL query` token. |
 | Orchestration flow | Schedule; refresh targets; notifications (redacted) |
+| Power BI App *(optional, presence-driven)* | Rendered into `03-reports.md`. **Overview** (publishing workspace + ID, last-updated, report / dashboard counts); **Reports published** table linking each report documented in this repo to its card and flagging the rest as external. Purpose / audience come from `[powerbi_app]` config; the publisher's name is never rendered (PII). |
 | Power App (canvas) *(optional)* | **Overview** (form factor, screen list, unpacked-source folder); **Connectors** (display name, tier, API family); **Data sources** (name, type, read vs read/write access, backing store); a write-back note listing read/write targets; and a **Downstream (pipeline)** section linking each write-back target to the dataflow(s) whose Power Query M reads it by name. The app author is never rendered (PII). |
 | Report index (catalog) | Single aggregate card listing **every** report (count, pages, visuals, curated purpose from `[reports]`), each linked to its own report card |
 | Page index | Single aggregate card listing **every** page across all reports (report, page, visual / filter counts), each linked to its own page card |

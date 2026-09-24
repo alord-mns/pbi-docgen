@@ -67,6 +67,12 @@ def _card_types(ctx: DocContext, kb_files: list[str], concept_eg: str | None) ->
         '- "Report" / "Report page" — what each report and page shows, its slicers,\n'
         "  filters, the metrics on it (with inline definitions), and its backing tables."
     )
+    if ctx.powerbi_apps:
+        bullets.append(
+            '- "Power BI App" — the distribution App that publishes the reports: which\n'
+            "  reports it ships and which of those are documented here. Use it for\n"
+            '  "what does the app contain" / "how are these reports published" questions.'
+        )
     if has_04:
         bullets.append(
             '- "Source lineage (code)" — the literal source code for one source entity: the\n'

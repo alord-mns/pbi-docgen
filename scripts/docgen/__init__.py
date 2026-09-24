@@ -10,6 +10,7 @@ Modules:
     dataflow    — parse exported Power BI dataflow JSON
     orchestration — parse Power Automate / Logic App workflow JSON
     power_apps  — parse unpacked canvas Power Apps
+    powerbi_app — parse a Power BI distribution App metadata export
     sqlsource   — parse SQL view exports
     lineage     — build the end-to-end dependency graph
     doctor      — preflight check for a new repository
@@ -17,4 +18,4 @@ Modules:
     validate    — enforce the quality gates in scripts/docgen/documentation_req.md
 """
 
-__version__ = "1.3.1"
+__version__ = "1.4.0"

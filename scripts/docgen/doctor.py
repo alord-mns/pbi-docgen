@@ -87,6 +87,11 @@ def _rows_for_paths(cfg: configmod.Config) -> tuple[list[tuple[str, str, str]], 
             cfg.resolve_many(cfg.paths.power_apps_definitions),
             ", ".join(cfg.paths.power_apps_definitions),
         ),
+        (
+            "Power BI App export",
+            cfg.resolve(cfg.paths.powerbi_app_definition),
+            cfg.paths.powerbi_app_definition,
+        ),
     ]
     for label, matches, pattern in optional:
         if matches:

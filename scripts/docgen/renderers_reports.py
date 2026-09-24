@@ -314,12 +314,83 @@ def render_report_overview(ctx: DocContext, rep) -> cards.Card:
     )
 
 
+def render_app_publication_card(ctx: DocContext, app) -> cards.Card:
+    """One card describing a Power BI distribution App and the reports it ships.
+
+    Reports whose name matches a report documented in this repo link to that
+    report's card; the rest are flagged as external, since an App routinely
+    bundles historical versions and reports from sibling solutions.
+    """
+    # Repo report label (name minus the ``.Report`` suffix) -> full name for the anchor.
+    repo_reports: dict[str, str] = {}
+    for rep in ctx.reports:
+        rname = rep.name or ""
+        label = rname[: -len(".Report")] if rname.endswith(".Report") else rname
+        if label:
+            repo_reports[label] = rname
+
+    parts: list[str] = []
+    # Meaning comes from config; facts come from the export.
+    purpose = ctx.cfg.powerbi_app.purpose or app.description
+    if purpose:
+        parts.append(f"> {md.md_escape_pipe(purpose)}")
+        parts.append("")
+
+    parts.append("### Overview")
+    parts.append("")
+    if app.workspace_name:
+        parts.append(f"- **Published from workspace:** `{md.md_escape_pipe(app.workspace_name)}`")
+    if app.workspace_id:
+        parts.append(f"- **Workspace ID:** `{md.md_escape_pipe(app.workspace_id)}`")
+    if ctx.cfg.powerbi_app.audience:
+        parts.append(f"- **Audience:** {md.md_escape_pipe(ctx.cfg.powerbi_app.audience)}")
+    if app.last_updated:
+        parts.append(f"- **Last updated (service):** `{md.md_escape_pipe(app.last_updated)}`")
+    parts.append(f"- **Reports published:** {len(app.reports)}")
+    if app.dashboard_count:
+        parts.append(f"- **Dashboards:** {app.dashboard_count}")
+
+    matched = sum(1 for r in app.reports if r.name in repo_reports)
+    parts.append("")
+    parts.append("### Reports published")
+    parts.append("")
+    parts.append(
+        f"{matched} of {len(app.reports)} are documented in this repository; the "
+        "rest live in other solutions or are historical versions."
+    )
+    parts.append("")
+    parts.append("| Report | In this repository |")
+    parts.append("|---|---|")
+    for r in app.reports:
+        full = repo_reports.get(r.name)
+        if full:
+            cell = f"[{r.name}](#{cards.card_anchor('report', full)})"
+            here = "yes"
+        else:
+            cell = md.md_escape_pipe(r.name)
+            here = "_external_"
+        parts.append(f"| {cell} | {here} |")
+
+    keywords = ["power bi app", "distribution app", "published reports", "app", app.name]
+
+    return cards.Card(
+        anchor=cards.card_anchor("powerbi-app", app.name),
+        title=app.name,
+        kind="Power BI App",
+        subtitle="distribution App and the reports it publishes",
+        keywords=tuple(dict.fromkeys(k for k in keywords if k)),
+        body="\n".join(parts).rstrip(),
+    )
+
+
 def render_reports(ctx: DocContext) -> str:
     ent2df = _entity_to_dataflow(ctx)
     cardlist: list[cards.Card] = []
     reports = ctx.reports or [ctx.lin.report]
     cardlist.append(render_report_catalog(ctx))
     cardlist.append(render_page_index(ctx))
+    for app in ctx.powerbi_apps:
+        cardlist.append(render_app_publication_card(ctx, app))
     for rep in sorted(reports, key=lambda r: r.name or ""):
         cardlist.append(render_report_overview(ctx, rep))
         for page in rep.pages:

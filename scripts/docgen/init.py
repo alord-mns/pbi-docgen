@@ -32,6 +32,7 @@ _SKIP_DIRS = {
 _SCAFFOLD_DIRS = [
     "pbi/semantic-model",
     "pbi/thin-reports",
+    "pbi/powerbi-app",
     "dataflows",
     "sql",
     "orchestration",
@@ -131,6 +132,7 @@ def _paths_block(detected: dict[str, object]) -> str:
         "sql_exports",
         "orchestration_definitions",
         "power_apps_definitions",
+        "powerbi_app_definition",
     ):
         value = detected.get(key, _DEFAULT_PATHS.get(key))
         rendered = (

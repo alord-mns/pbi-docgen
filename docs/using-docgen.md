@@ -113,6 +113,7 @@ The engine discovers everything by glob. Defaults live in
 | SQL view exports | `sql/*.sql` | No |
 | Orchestration workflow JSON | `orchestration/**/definition.json` | No |
 | Canvas Power Apps (unpacked) | `power-apps/**/CanvasManifest.json` | No |
+| Power BI App metadata export | `pbi/powerbi-app/*.json` | No |
 
 Two rules follow from this table:
 
@@ -149,6 +150,24 @@ rather than reporting a glob that matched nothing.
 Match the SQL export filenames to the Databricks view / table names they define
 (`sql/fact_orders.sql` for view `fact_orders`). That filename **is** the join
 key for the two-hop source trace.
+
+### Power BI distribution App
+
+A Power BI *App* (the audience app that publishes reports) is a service-side
+construct with no PBIP definition, so there is nothing in the repo to read. To
+document it, export its metadata out of band — a Power Automate flow or a REST
+call to `https://api.powerbi.com/v1.0/myorg/apps` — and commit the JSON under
+`pbi/powerbi-app/`. The engine then emits an **App card** in `03-reports.md`
+listing every report the App publishes, linking those documented in this repo
+and flagging the rest as external.
+
+Two things to handle in the export itself, before committing:
+
+- **Drop the publisher's name.** The API returns `publishedBy` as a person's
+  name; the engine ignores it, but don't commit personal data you don't need.
+- The App's *purpose* and *audience* are not in the export — put those in
+  `[powerbi_app]` in your `.docgen.toml`. Facts come from the export, meaning
+  from config.
 
 ---
 

@@ -180,6 +180,7 @@ class DocContext:
     trace: sourcetrace.SourceTrace
     sql_catalog: sqlsource.SqlCatalog
     power_apps: list = field(default_factory=list)
+    powerbi_apps: list = field(default_factory=list)
     # dataflow name -> [(app name, writable source name), ...] write-back edges
     app_writeback: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     # ---- precomputed reverse maps (built by build_context) ----
@@ -207,6 +208,7 @@ def build_context(
     trace: sourcetrace.SourceTrace,
     sql_catalog: sqlsource.SqlCatalog,
     power_apps: list | None = None,
+    powerbi_apps: list | None = None,
 ) -> DocContext:
     """Build the shared context + reverse maps used by every renderer."""
     ctx = DocContext(
@@ -220,6 +222,7 @@ def build_context(
         trace=trace,
         sql_catalog=sql_catalog,
         power_apps=list(power_apps or []),
+        powerbi_apps=list(powerbi_apps or []),
         app_writeback=pamod.writeback_links(power_apps or [], dataflows),
     )
 

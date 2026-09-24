@@ -22,6 +22,7 @@ from . import md
 from . import orchestration as orcmod
 from . import pbir as pbirmod
 from . import power_apps as pamod
+from . import powerbi_app as pbiappmod
 from . import sourcetrace
 from . import sqlsource
 from . import tmdl
@@ -246,6 +247,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"{len(a.data_sources)} data source(s)"
             )
 
+    # ---- Power BI distribution App export (presence-driven) ----
+    powerbi_apps = pbiappmod.load_powerbi_apps(
+        cfg.resolve(cfg.paths.powerbi_app_definition), repo_root=REPO_ROOT
+    )
+    if powerbi_apps:
+        print(f"[docgen] loading {len(powerbi_apps)} Power BI App export(s)")
+        for a in powerbi_apps:
+            print(f"[docgen]   `{a.name}` — {len(a.reports)} published report(s)")
+
     # ---- Lineage ----
     print("[docgen] building lineage graph")
     lin = lineagemod.build(
@@ -328,6 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         trace=trace,
         sql_catalog=sql_catalog,
         power_apps=power_apps,
+        powerbi_apps=powerbi_apps,
     )
 
     # ---- Write phase (skip files whose content is unchanged) ----

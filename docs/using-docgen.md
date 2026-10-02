@@ -108,7 +108,7 @@ The engine discovers everything by glob. Defaults live in
 |---|---|---|
 | Semantic model (TMDL) | `pbi/semantic-model/*.SemanticModel/definition` | **Yes** |
 | Thin reports (PBIR) | `pbi/thin-reports/*.Report/definition` | **Yes** |
-| Reports excluded from docs | `pbi/semantic-model/*.Report/definition` | — |
+| Report excluded from docs *(default guess, overridable)* | `pbi/semantic-model/*.Report/definition` — see [Which report gets documented](#which-report-gets-documented) | — |
 | Dataflow JSON exports | `dataflows/*.json` | No |
 | SQL view exports | `sql/*.sql` | No |
 | Orchestration workflow JSON | `orchestration/**/definition.json` | No |
@@ -139,6 +139,15 @@ thin reports exist, `true` when the model-attached report is the only one. Both
 are guesses. **Correct it if it is wrong** — a solution can perfectly well have
 thin reports *and* a user-facing report attached to the model, and no amount of
 folder inspection can tell that apart from a leftover development report.
+
+The default `excluded_report_definitions` glob (shown in the table above)
+excludes the model-attached report, because in the common thin-report layout it
+is a development artefact. **For a simple solution with no `thin-reports/` folder
+at all** — where the only report is the one attached to the model PBIP — that
+default would exclude your only report. `init` handles this: it points the
+thin-report glob at the model-attached report, clears `excluded_report_definitions`,
+and sets `include_model_attached_report = true`, so the one report you have is
+the one documented. The table row is only the *default*, not an unconditional rule.
 
 The flag overrides `excluded_report_definitions` for that report only, so you can
 still use the exclusion globs to drop other reports.

@@ -18,4 +18,4 @@ Modules:
     validate    — enforce the quality gates in scripts/docgen/documentation_req.md
 """
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"

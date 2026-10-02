@@ -102,6 +102,33 @@ def _rows_for_paths(cfg: configmod.Config) -> tuple[list[tuple[str, str, str]], 
                 NONE,
                 f"nothing matched `{pattern}` - section will be omitted",
             ))
+
+    # Footgun: a .msapp left inside the Power Apps tree. It is the raw binary
+    # (gitignored, never read); its presence usually means someone unpacked in
+    # place and forgot to remove the zip, ending up with both.
+    msapp: set[Path] = set()
+    for pattern in cfg.paths.power_apps_definitions:
+        static: list[str] = []
+        for seg in pattern.split("/"):
+            if any(ch in seg for ch in "*?["):
+                break
+            static.append(seg)
+        root = md.REPO_ROOT.joinpath(*static) if static else md.REPO_ROOT
+        if root.is_dir():
+            msapp.update(root.rglob("*.msapp"))
+    if msapp:
+        files = sorted(msapp)
+        shown = ", ".join(f"`{p.relative_to(md.REPO_ROOT)}`" for p in files[:3])
+        if len(files) > 3:
+            shown += f" (+{len(files) - 3} more)"
+        rows.append((
+            "Stray .msapp binary",
+            WARN,
+            f"{len(files)} `.msapp` file(s) under the Power Apps tree ({shown}). "
+            "That is the raw binary \u2014 commit only the unpacked folder and delete "
+            "the .msapp (it is gitignored and never read).",
+        ))
+
     return rows, blocked
 
 

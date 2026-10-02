@@ -164,11 +164,12 @@ key for the two-hop source trace.
 
 A Power BI *App* (the audience app that publishes reports) is a service-side
 construct with no PBIP definition, so there is nothing in the repo to read. To
-document it, export its metadata out of band — a Power Automate flow or a REST
-call to `https://api.powerbi.com/v1.0/myorg/apps` — and commit the JSON under
-`pbi/powerbi-app/`. The engine then emits an **App card** in `03-reports.md`
-listing every report the App publishes, linking those documented in this repo
-and flagging the rest as external.
+document it, export its metadata out of band and commit the JSON under
+`pbi/powerbi-app/`. A ready-made [Power Automate flow](https://make.powerautomate.com/environments/Default-bd5c6713-7399-4b31-be79-78f2d078e543/flows/c78593dc-9912-460e-9711-0a8140b37db6/details)
+does this for you; alternatively call the REST endpoint
+`https://api.powerbi.com/v1.0/myorg/apps` yourself. The engine then emits an
+**App card** in `03-reports.md` listing every report the App publishes, linking
+those documented in this repo and flagging the rest as external.
 
 Two things to handle in the export itself, before committing:
 
@@ -177,6 +178,25 @@ Two things to handle in the export itself, before committing:
 - The App's *purpose* and *audience* are not in the export — put those in
   `[powerbi_app]` in your `.docgen.toml`. Facts come from the export, meaning
   from config.
+
+**Minimum JSON shape.** Whatever produces the export — the flow above, a REST
+script, or a future replacement — must emit at least these fields; the engine
+ignores everything else in the raw API response:
+
+```json
+{
+  "app": { "name": "...", "description": "...", "lastUpdated": "..." },
+  "workspace": { "name": "...", "id": "..." },
+  "reports": [ { "reportName": "...", "reportType": "PowerBIReport" } ],
+  "dashboards": []
+}
+```
+
+- `reports[].reportName` is the only per-report field that must be present —
+  entries without it are skipped. `reportType` is shown if given.
+- Only the **count** of `dashboards` is used, so an array of bare objects is fine.
+- Do **not** include `publishedBy` (see above) — it is personal data and the
+  engine does not read it.
 
 ---
 

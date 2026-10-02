@@ -202,15 +202,30 @@ ignores everything else in the raw API response:
 
 ## 3. Unpack canvas Power Apps (only if you have them)
 
-A `.msapp` is a binary archive, so the engine cannot read it. Commit the
-*unpacked* source instead — the engine never runs `pac` itself:
+A `.msapp` is a binary archive the engine cannot read, so you commit the
+**unpacked** source instead. It is a one-command step, and the `.msapp` never
+needs to go into the repo — so you will not end up with both the zip and the
+source.
 
-```powershell
-pac canvas unpack --msapp 'My App.msapp' --sources 'power-apps/My-App'
-```
+1. Download the app's `.msapp` to anywhere convenient — your Downloads folder is
+   fine. It does **not** belong in the repo.
+2. From the repo root, unpack it **straight into** its destination folder. The
+   `--sources` path is where the exploded source lands, so there is nothing to
+   move afterwards:
 
-Add `*.msapp` to `.gitignore` and commit the unpacked folder. Presence of
-`power-apps/**/CanvasManifest.json` is what turns on `05-power-apps.md`.
+   ```powershell
+   pac canvas unpack --msapp "$HOME\Downloads\My App.msapp" --sources "power-apps\My-App"
+   ```
+
+3. Commit the `power-apps/My-App/` folder — that is the only thing that belongs
+   in the repo. You can delete the `.msapp` now.
+
+Presence of `power-apps/**/CanvasManifest.json` is what turns on
+`05-power-apps.md`.
+
+> **Belt and braces:** `init` adds `*.msapp` to `.gitignore`, so even if a
+> `.msapp` does find its way into the repo it is never committed. The engine
+> never runs `pac` itself — it only reads the unpacked folder you commit.
 
 ---
 
